@@ -1,0 +1,300 @@
+# =============================================================================
+# heston_benchmark_v6.yaml  —  BENCHMARK CONTRACT (freeze pending sign-offs, §open_items)
+# -----------------------------------------------------------------------------
+# Sobolev-PINN Greeks for Heston Option Pricing.
+#
+# v5 -> v6:
+#   OPTION A LOCKED     : parametric net over a SAMPLED hypercube (inputs include
+#                         kappa,theta,xi,rho,v0); named regimes become EVAL ANCHORS.
+#   FELLER REPAIR (full): sampling constrained to feller_ratio >= 0.4 (corners reach
+#                         ~0.11, worse than the 0.44 boundary regime); regime table
+#                         relabeled so names match the math; 4th oracle leg on all
+#                         feller-stressed points.
+#   FACTORIAL COMPLETED : Sobolev-sans-PDE (DML-no-PDE) arm = the missing 4th cell,
+#                         implemented as omega_PDE=0 (consolidated #3).
+#   GAMMA-ONLY ARM      : +D+G (no vega) so Vega's marginal hedging contribution is
+#                         MEASURED, not asserted (consolidated #4); Vega payoff reported
+#                         on the Greek-accuracy leg (consolidated #10).
+#   SMOOTHED BASELINE   : no-trade-band policy class (consolidated #7) [band citation VERIFY].
+#   ANSATZ HELD FIXED   : identical terminal-condition/ansatz across arms (consolidated #6).
+#
+
+# =============================================================================
+
+meta:
+  name: heston_benchmark
+  version: v6
+  global_seed: 42
+  seeds_min: 5
+  seeds_confirmatory_cell: 10
+  notes: >
+    Primary = HELD-OUT ONLY. Strategy = DELTA-ONLY. Attribution via LADDER (order) and
+    label-noise DOSE-RESPONSE (correctness). Mechanism = cost-vs-robustness adjudication,
+    NOT a pre-decided outcome. Parametric hypercube (Option A). CRN across ALL arms.
+    Week-one oracle-headroom gate precedes all training.
+
+# -----------------------------------------------------------------------------
+oracle_headroom_gate:
+  purpose: "measure the MAX detectable effect before committing compute"
+  procedure: >
+    Hedge the confirmatory instrument twice: (a) with oracle Greeks; (b) with oracle
+    Greeks + noise scaled to plausible PINN gamma error (e.g. sigma_gamma from a pilot
+    fit). The PnL-distribution spread between (a) and (b) is the ceiling on any effect
+    the project can show on the primary metric.
+  decision_rule: >
+    If spread < pre-registered 10% CVaR95 threshold at chosen frequency and TC tiers,
+    RETUNE (rebalance frequency, misspecification severity) before M4. Non-optional.
+  motivation: "Sakuma Table 5 (oracle ~= network hedge) is the power warning."
+  runs_before: all_training
+
+# -----------------------------------------------------------------------------
+# MODELS
+# -----------------------------------------------------------------------------
+models:
+  heston: {role: in_model, params_symbols: [kappa, theta, xi, rho, v0]}
+  bates:
+    role: ood_hedging_only
+    base_params_inherit: heston.regimes.baseline
+    jump_severity_sweep: {lambda_j: [0.0, 0.1, 0.25, 0.5], mu_j: -0.10, sigma_j: [0.05, 0.10, 0.15]}
+    consistency_check: "lambda_j=0.0 must recover the Heston misspecified-hedging result."
+    goldilocks_preregistration: >
+      Gap requires approximation error non-negligible RELATIVE to model bias; expect
+      NON-MONOTONE gap visibility across severity. Sweep LOCATES the decision-relevant
+      regime; 'nowhere' = the pre-registered null.
+  merton:
+    role: ood_hedging_only
+    params: {sigma: 0.20, lambda_j: 0.25, mu_j: -0.10, sigma_j: 0.10}
+    note: "isolates jump-misspec from SV-structure transfer."
+
+# -----------------------------------------------------------------------------
+# TRAINING PARAMETERIZATION — OPTION A (LOCKED)
+# -----------------------------------------------------------------------------
+training_parameterization:
+  choice: parametric_hypercube
+  network_inputs: [S, K, tau, kappa, theta, xi, rho, v0]
+  sampling:
+    method: latin_hypercube            # or sobol; declared, seeded
+    ranges: {kappa: [1.0, 4.0], theta: [0.02, 0.12], xi: [0.20, 0.60], rho: [-0.80, -0.20], v0: [0.01, 0.12]}
+    feller_constraint: "REJECT samples with 2*kappa*theta/xi^2 < 0.40 (corners reach ~0.11 << 0.44 boundary regime; oracle untrustworthy there)"
+    exclusions:
+      - "rho < -0.80 excluded entirely -> strong_neg_corr (rho=-0.9) is genuine EXTRAPOLATION"
+      - "excised balls (10% relative radius) around every named evaluation anchor"
+  named_regimes_role: evaluation_anchors_not_training_set
+  ood_type1_tiers:
+    interpolation_with_hole: near_feller        # inside cube, ball excised
+    extrapolation_beyond_support: strong_neg_corr # rho outside sampled range; expect larger seed variance
+  precedent: "Sakuma's network takes model parameters as inputs and trains (text-verified)."
+
+# -----------------------------------------------------------------------------
+# GRID / REGIMES (relabeled so names match the math) / SPLITS
+# -----------------------------------------------------------------------------
+grid: {S: {min: 50.0, max: 150.0, n: 41}, K: {min: 60.0, max: 140.0, n: 33}, tau: {min: 0.04, max: 1.0, n: 16}, r: 0.02, q: 0.00, option_type: european_call}
+
+# Named regimes are EVALUATION ANCHORS (training is hypercube-sampled, feller>=0.4).
+regimes:
+  baseline:                 {role: control_anchor, kappa: 2.0, theta: 0.04, xi: 0.30, rho: -0.50, v0: 0.04, v_trunc: [0.005, 0.06], feller_ratio: 1.78}
+  feller_violating_volvol:  {role: stress_numerical_boundary, kappa: 2.0, theta: 0.04, xi: 0.60, rho: -0.50, v0: 0.04, v_trunc: [0.003, 0.09], feller_ratio: 0.44,
+                             oracle: requires_fourth_leg,   # self-describing; oracle.fourth_leg.required_for stays authoritative
+                             renamed_from: high_volvol,
+                             note: "FELLER VIOLATED (0.44). EXCLUDED from training sampling by the >=0.40 constraint boundary; used as an EVAL anchor only, WITH oracle-uncertainty error bars and the 4th leg.",
+                             carries: "Vega worst-case long-tau slice — reported WITH error bars under F7 discipline"}
+  high_variance:            {role: control_anchor, kappa: 2.0, theta: 0.09, xi: 0.30, rho: -0.50, v0: 0.09, v_trunc: [0.02, 0.14], feller_ratio: 4.00}
+  strong_neg_corr:          {role: eval_extrapolation, kappa: 2.0, theta: 0.04, xi: 0.30, rho: -0.90, v0: 0.04, v_trunc: [0.005, 0.06], feller_ratio: 1.78, note: "rho beyond sampled range -> genuine extrapolation; expect larger seed variance"}
+  near_feller:              {role: eval_interpolation_hole, kappa: 1.5, theta: 0.04, xi: 0.34, rho: -0.70, v0: 0.02, v_trunc: [0.001, 0.07], feller_ratio: 1.04, oracle: requires_fourth_leg}
+
+splits:
+  training: hypercube_sampled_feller_ge_0p4
+  eval_anchors_heston: [baseline, high_variance, feller_violating_volvol, strong_neg_corr, near_feller]
+  heldout_greek_and_hedging: [near_feller, strong_neg_corr]        # OOD type 1: BOTH metrics
+  ood_models_hedging_only: [bates, merton]                          # OOD type 2: hedging PnL only
+  tau_maturity_holdout: {enabled: true, role: sanity_check}
+  moneyness_wing_holdout: {enabled: true, role: sanity_check, gamma_metric: absolute_only}
+
+# -----------------------------------------------------------------------------
+# ORACLE  (3-way + 4th leg on feller-stressed points; vanna added)
+# -----------------------------------------------------------------------------
+oracle:
+  formulation: heston_cf_trap_free           # Albrecher 2007 (HestonTrap.pdf, present)
+  differentiate: before_not_after
+  quantities: [price, delta, gamma, vega, vanna]
+  three_way_validation:
+    leg1: autodiff_through_trap_free_cf
+    leg2: finite_difference_on_cf_price_grid
+    leg3: monte_carlo_pathwise_or_likelihood_ratio
+    agreement_tol_rel: 1.0e-3
+  fourth_leg:
+    method: craig_sneyd_adi
+    required_for: [near_feller, feller_violating_volvol, "any sampled point with feller_ratio in [0.40, 0.60]"]
+    reason: "CF-diff least trustworthy near/below Feller boundary (Little Heston Trap, Albrecher 2007)."
+  masking:
+    rule: mask_points_where_legs_disagree_above_tol
+    declared: pre_training
+    neutrality_checks:
+      - "must NOT preferentially remove points where baseline PINN fails"
+      - "retained-point distribution matched across arms"
+      - "must NOT preferentially retain smooth-agrees-with-smooth points"
+  uncertainty_reporting: {per_regime: true, per_greek: true, report_improvement_to_oracle_noise_ratio: true}
+  reporting_discipline_F7: {lead_with: [baseline, high_variance], boundary_rule: "near_feller AND feller_violating_volvol WITH error bars; effect must exceed oracle noise", do_not: "drop boundary regimes"}
+
+# -----------------------------------------------------------------------------
+# METHODS — LADDER + COMPLETED FACTORIAL + GAMMA-ONLY  (one class, config flags)
+# -----------------------------------------------------------------------------
+# ansatz/terminal-condition IDENTICAL across every arm (consolidated #6) [VERIFY H&C form].
+methods:
+  ansatz_control: {terminal_condition_treatment: identical_across_all_arms}
+
+  # --- residual x supervision factorial ---
+  baseline0_feedforward:   {use_pde: false, labels: none, note: "price-only NN; FD-equivalent stencils; info-matched"}
+  baseline1_standard_pinn: {use_pde: true,  greeks: structural, labels: none, note: "Hainaut & Casas PDE-residual baseline"}
+  sobolev_pinn:            {use_pde: true,  labels: {delta: true, gamma: true, vega: true}, note: "MAIN (= ladder rung3)"}
+  sobolev_sans_pde:        {use_pde: false, labels: {delta: true, gamma: true, vega: true}, note: "MISSING 4TH CELL (DML-no-PDE). Tests whether the residual earns its keep OUT-of-distribution (Sakuma B~=C only shows in-dist inertia). Implement as omega_PDE=0."}
+
+  # --- supervision ladder (order axis) ---
+  ladder_rung0_price:       {use_pde: true, labels: {delta: false, gamma: false, vega: false}}
+  ladder_rung1_delta:       {use_pde: true, labels: {delta: true,  gamma: false, vega: false}, note: "differential-ML rung; Noguer: INSUFFICIENT for held-out Gamma"}
+  ladder_rung2_delta_gamma: {use_pde: true, labels: {delta: true,  gamma: true,  vega: false}, note: "THE CAUSAL RUNG (rung1->rung2 gap = order claim); ALSO the Gamma-only arm (consolidated #4) measuring Vega's marginal contribution"}
+  ladder_rung3_dgv:         {use_pde: true, labels: {delta: true,  gamma: true,  vega: true},  note: "= sobolev_pinn"}
+
+  optional_vanna_arm:       {use_pde: true, labels: {delta: true, gamma: true, vega: true, vanna: true}, status: schedule_permitting, note: "adds lambda_vanna*L_vanna; natural extension, not a dependency"}
+  ude:                      {family: ude, pde: partial, scope: "ONE comparison, ONE number, ONE sentence"}
+  finn:                     {status: RELATED_WORK_ONLY, note: "emergent Greeks; Delta-gamma hedging verified GBM-only internally."}
+  deep_hedging:             {status: RELATED_WORK_ONLY, note: "learns a POLICY, discards pricer; one sentence."}
+
+# NOTE: Vega is FIRST-order in variance. Vanna = d2C/dSdv is the delta-hedge-relevant
+# vol sensitivity; supervised only in optional_vanna_arm, otherwise a DIAGNOSTIC.
+
+# -----------------------------------------------------------------------------
+# LOSS  (one expression; terms toggled by flags)
+# -----------------------------------------------------------------------------
+loss:
+  expression: "L = L_price + lambda_pde*L_pde + lambda_bc*L_bc + lambda_D*L_D + lambda_G*L_G + lambda_v*L_v [+ lambda_vanna*L_vanna if optional arm]"
+  toggles: {use_pde: lambda_pde, supervise_delta: lambda_D, supervise_gamma: lambda_G, supervise_vega: lambda_v}
+  lambda_discipline: {tune_on: validation_only, assert_test_untouched: true, log_selected_values: true}
+
+# -----------------------------------------------------------------------------
+# LABEL-NOISE DOSE-RESPONSE  (correctness axis; margin_X dissolved)
+# -----------------------------------------------------------------------------
+label_noise_dose_response:
+  base_arm: ladder_rung3_dgv
+  corruption: gamma_labels_only            # delta AND vega labels TRUE in every arm
+  arms:
+    sigma_000: {gamma_labels: true_oracle}
+    sigma_010: {gamma_labels: "oracle*(1+N(0,0.10))"}
+    sigma_025: {gamma_labels: "oracle*(1+N(0,0.25))"}
+    sigma_050: {gamma_labels: "oracle*(1+N(0,0.50))"}
+    shuffled:  {gamma_labels: shuffled_permuted, kind: structurally_wrong_endpoint}
+    bs_gamma:  {gamma_labels: black_scholes_at_matched_iv, kind: cheap_label_point, plotted_on_same_curve: true}
+  gradient_penalty_only: {penalty: curvature_L2, labels: none, kind: pure_regularizer_reference}
+  evidence: "MONOTONE curve label-quality -> misspecified delta CVaR95 (isotonic + rank corr)"
+  readings: {monotone: "correctness matters", flat: "regularization null", true_ties_bs: "cheap labels suffice"}
+
+# -----------------------------------------------------------------------------
+# INFORMATION MATCHING  (3N/5N dissolved)
+# -----------------------------------------------------------------------------
+information_matching:
+  baseline_price_points: grow_until_greek_accuracy_plateaus
+  cap: 5N
+  stencils: fd_equivalent_resolution        # derivative info recoverable if FD applied
+  report: [saturation_curve, fd_equivalent_resolution_version, raw_scalar_count_version]
+  capacity_control: "retrain saturated baseline at 2x width; still flat => optimization-limited objection dies"
+  wording: "plateau bounds what THIS architecture/protocol extracts from prices, NOT an information bound"
+
+# -----------------------------------------------------------------------------
+# HEDGING SIMULATION  (delta-only; one confirmatory cell)
+# -----------------------------------------------------------------------------
+hedging_simulation:
+  strategy: delta_only_underlying
+  instrument: {type: european_call, S0: 100.0, K: 100.0, tau0: 0.25}
+  horizon: {T_prime: 0.17, construction: "hedge to T' < T, liquidate at T' (A&T construction): bounds Gamma, avoids near-expiry ATM churn, stays in oracle-trusted tau"}
+  rebalancing: {frequency: daily, dt: 0.003968, fixed_across_arms: true}
+  paths: {n_paths_per_cell: 10000, common_random_numbers: ALL_ARMS}
+  pnl_convention:
+    self_financing: true
+    initial_premium: theta_train_ORACLE_price_for_ALL_arms
+    terminal_liability_mark: true_DGP_price_at_T_prime
+    loss_definition: "L = -PnL; CVaR95 = mean worst 5% of L"
+  transaction_costs: {kind: proportional_on_traded_notional, tiers: [0.00, 0.01, 0.02]}
+  misspecification:
+    train_params: baseline
+    perturbations:                       
+      xi_up:    {xi: 0.45}
+      rho_down: {rho: -0.80}
+      combined: {xi: 0.45, rho: -0.80}
+    cross_model: [bates_severity_sweep, merton]
+  confirmatory_cell: {perturbation: combined, tc_tier: 0.01, regime: baseline, contrast: rung3_vs_standard_pinn, seeds: 10}
+  competitors_extra:
+    - monte_carlo_greek_hedger
+    - oracle_delta_hedger                    # ceiling; headline = fraction_of_gap_closed
+    - smoothed_baseline_no_trade_band         # consolidated #7 — recognized policy class
+  smoothed_baseline_no_trade_band:
+    policy: no_trade_band_on_standard_pinn
+    citation: "[VERIFY] band-policy source — attributed to a Sakuma-HVA paper NOT in project; if unobtainable, cite classic transaction-cost hedging (e.g. Whalley-Wilmott / Davis-Panas-Zariphopoulou) instead"
+    target_to_beat: "Sobolev should cut cost WITHOUT the band's tracking-error penalty"
+  turnover:
+    metric: "T_ex = sum|dDelta_hat| - sum|dDelta_oracle| on the SAME paths (EXCESS over oracle)"
+    framing: "mechanism is gamma ERROR (excess turnover above oracle), NOT gamma LEVEL (consolidated #8)"
+    falsifier: "cost channel requires T_ex -> 0 for clean arm; unmoved T_ex kills it whatever PnL shows"
+  mechanism_preregistration:
+    two_by_two: {cells: "{theta_test=theta_train, !=} x {kappa=0, >0}", in_model_k0: "~no gap = Sakuma cell (consistency check)"}
+    channel_readings:
+      gap_at_0pct_TC_present: robustness_channel_i        # A&T-adjacent
+      gap_zero_at_0pct_widening_with_TC_and_Tex_drops: cost_channel_ii
+      both: "decompose: 0%-gap = robustness component; TC-slope = cost component"
+      neither_anywhere: "pre-registered NULL: second-order supervision doesn't improve OOD delta hedging beyond first-order (coherent post-Sakuma)"
+    note: "MECHANISM IS ADJUDICATED, NOT ASSUMED. Do not pre-commit to the cost outcome."
+
+hedging_secondary_delta_gamma: {role: evaluation_only_one_sentence, expectation: "consistent with A&T L_mean cost finding; option-leg turnover dominates; ratio-hedge ill-conditioning remark lives HERE"}
+
+# -----------------------------------------------------------------------------
+# METRICS
+# -----------------------------------------------------------------------------
+metrics:
+  price: {name: price_rmse, role: sanity_check}
+  greeks_in_domain: {role: sanity_check, quantities: [delta, gamma, vega, vanna]}
+  greeks_ood_params:
+    role: PRIMARY                             # coherent ONLY under Option A
+    scope: heldout_HESTON_parameter_regimes_ONLY
+    quantities: [delta, gamma, vega, vanna]
+    vega_payoff_reported_here: true           # consolidated #10
+    note: "report TAIL quantiles alongside RMSE (Sakuma: supervision helps Gamma tails > global RMSE)"
+  greeks_cross_model: DROPPED_FROM_PRIMARY    # bias term identical across arms
+  hedging: see hedging_simulation             # PRIMARY
+  cvar_convention: {loss: "-PnL", level: 0.95, threshold_form: "relative >=10% AND paired-bootstrap 95% CI excludes 0"}
+
+# -----------------------------------------------------------------------------
+# COMPUTE / ABLATIONS
+# -----------------------------------------------------------------------------
+compute_accounting: {report_per_run: [wall_clock, param_count, derivative_eval_cost, peak_memory], report_both: [matched_epochs, matched_compute]}
+ablations:
+  A1_vega_gamma_interaction: "does supervising one degrade the other?"
+  A2_pde_weight_sensitivity:
+    sweep_includes_zero: true                 # omega_PDE=0 IS sobolev_sans_pde (the 4th factorial cell) AND the Sakuma twin-net config
+    pre_registration: "Sakuma C~=B at omega_R=0.01 => weak residual inert IN-dist; question: does load-bearing PDE change OOD behavior?"
+
+# -----------------------------------------------------------------------------
+# PRE-REGISTERED THRESHOLDS
+# -----------------------------------------------------------------------------
+acceptance_thresholds:
+  confirmatory_cell_pass: "misspec delta CVaR95 improvement >=10% relative AND paired-bootstrap 95% CI excludes 0 (combined,1% TC,baseline,rung3 vs standard_pinn)"
+  headline_scale_free: fraction_of_baseline_to_oracle_gap_closed
+  order_attribution: "rung2 beats rung1 at the cell, CI excludes 0; failure = honest null"
+  dose_response: "monotone (isotonic + rank correlation); flat = regularization null"
+  ood_gamma_rmse_reduction_min: 0.15
+  ood_vega_rmse_reduction_min: 0.15           # Greek-accuracy leg
+  price_parity_within: 0.10
+  mechanism_falsifier: "0%-TC gap => robustness (i); zero-at-0% widening + T_ex->0 => cost (ii); T_ex unmoved rejects (ii). Both publishable. STATE BEFORE RESULTS."
+  in_model_hedging: NOT_PASS_FAIL             # = (in-model x cost) 2x2 corner; must reproduce Sakuma null
+  seeds: {default: 5, confirmatory_cell: 10}
+  tail_claim_requires: paired_bootstrap_over_CRN_paths_with_seed_variance_separated
+
+# -----------------------------------------------------------------------------
+# FOUR EXHIBITS
+# -----------------------------------------------------------------------------
+exhibits:
+  E1_ladder_and_factorial_table: "misspec delta CVaR95 across rungs + 4-cell factorial (incl sobolev_sans_pde); OOD-param Greek RMSE side panel (Vega payoff here)"
+  E2_mechanism_figure: "TC sweep x arms; 2x2 inset; T_ex (excess-over-oracle turnover)"
+  E3_dose_response_curve: "label quality -> CVaR95, BS-Gamma labeled — money figure"
+  E4_decomposition_panel: "fraction-of-oracle-gap-closed; cost vs directional split; vanna inset; smoothed-band comparison"
+  one_sentence_citizens: [ude, delta_gamma_secondary, finn_related_work, deep_hedging_related_work]
+  cut: [finn_reproduction, wing_tau_headline_tables, cross_model_greek_rmse, in_model_cvar_threshold]
+

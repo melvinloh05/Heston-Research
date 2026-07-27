@@ -1,0 +1,132 @@
+# =============================================================================
+# pinn_config.yaml — ENGINE SUPPLEMENT to the FROZEN-PENDING heston_benchmark_v6.yaml.
+# Model/training parameters only; never overrides contract values. Every named arm
+# below is ONE PINNConfig of the single SobolevPINN class — flags only, no code paths.
+# Seeds derive from contract meta (global_seed 42 + 0..seeds_min-1).
+# =============================================================================
+
+shared:
+  inputs: [S, K, tau, kappa, theta, xi, rho, v0]   # option_A parametric hypercube — LOCKED in v6
+                                                   # (option_B [S, K, tau, v] + pde_params machinery retained but UNUSED under v6)
+  input_ranges:                 # CONTRACT normalization ranges (v6 grid + hypercube), NOT batch stats.
+    S: [50.0, 150.0]            # grid                 Normalization lives INSIDE MLP.forward -> all
+    K: [60.0, 140.0]            # grid                 autodiff stays in RAW coordinates; affine map
+    tau: [0.04, 1.0]            # grid                 to [-1,1], NO clamp (OOD extrapolates past +-1,
+    kappa: [1.0, 4.0]           # hypercube            e.g. strong_neg_corr rho=-0.9 -> -4/3).
+    theta: [0.02, 0.12]         # hypercube            SHARED-BLOCK ONLY: identical-architecture
+    xi: [0.20, 0.60]            # hypercube            invariant requires bit-identical buffers
+    rho: [-0.80, -0.20]         # hypercube            across every arm.
+    v0: [0.01, 0.12]            # hypercube
+  n_layers: 4
+  width: 64
+  activation: tanh
+  width_mult: 1.0
+  use_bc: false                 # v6: NO separate boundary-condition term. Price + Greek supervision
+                                # and the PDE residual carry the constraints; the terminal-condition/
+                                # ansatz treatment is identical across arms (methods.ansatz_control).
+                                # build_arm_labels no longer emits x_bc/price_bc, so the BC term is
+                                # OFF for every arm (loss adds it only when use_bc AND x_bc present).
+  dtype: float32
+  r: 0.02
+  q: 0.00
+  n_price_points: 4096          # N: the ladder's per-arm price-point budget
+  lambda_pde: 1.0               # initial; tuned on VALIDATION ONLY; sweep below includes 0.0
+  lambda_bc: 1.0
+  lambda_delta: 1.0
+  lambda_gamma: 1.0
+  lambda_vega: 1.0
+  loss_scale_mode: label_second_moment
+                                # Per-term loss normalization: each supervised MSE / (mean(label^2)+eps),
+                                # scales frozen ONCE from the first training batch (flag-independent ->
+                                # bit-identical buffers across arms; PDE scale = mean((r*price_label)^2)+eps).
+                                # WHY: raw-unit MSEs at EQUAL 5% relative error (baseline regime, CF oracle)
+                                # are price ~2.1e0, vega ~1.1e0, delta ~1.1e-3, gamma ~7.5e-7 — the gamma
+                                # term (the causal rung of the study) sits ~6 orders below price/vega with
+                                # lambda=1, is numerically inert, and silently nulls rung1->rung2. "raw"
+                                # restores the legacy unnormalized loss.
+  second_order_microbatch: 2048 # eval-time chunking of double-backward Greek extraction
+
+hypercube_sampling:             # v6 Option A (LOCKED): training params SAMPLED; named regimes = eval anchors
+  method: latin_hypercube       # declared, seeded
+  ranges: {kappa: [1.0, 4.0], theta: [0.02, 0.12], xi: [0.20, 0.60], rho: [-0.80, -0.20], v0: [0.01, 0.12]}
+  feller_min: 0.40              # REJECT samples with 2*kappa*theta/xi^2 < 0.40
+                                # (corners reach ~0.11 << the 0.44 boundary regime; oracle untrustworthy there)
+  excision:                     # v6 anchor excision: named regimes are EVAL ANCHORS, never training data.
+                                # DEFINITION (matches train_pinn.sample_hypercube_params): in range-normalized
+                                # coordinates u = (x - lo)/(hi - lo) per dimension (using `ranges` above),
+                                # REJECT any sample whose EUCLIDEAN distance to an anchor is
+                                # < rel_radius * sqrt(d) — an L2 ball of rel_radius of the unit-cube diagonal.
+                                # Out-of-cube anchors (strong_neg_corr, rho=-0.90) excise only where their
+                                # ball intersects the cube.
+    rel_radius: 0.10
+    anchors:                    # COPIED from heston_benchmark_v6.yaml `regimes:` (kappa/theta/xi/rho/v0 only).
+                                # The contract is the SOURCE OF TRUTH — regenerate via
+                                # train_pinn.anchors_from_contract if regimes ever change.
+      baseline:                 {kappa: 2.0, theta: 0.04, xi: 0.30, rho: -0.50, v0: 0.04}
+      feller_violating_volvol:  {kappa: 2.0, theta: 0.04, xi: 0.60, rho: -0.50, v0: 0.04}
+      high_variance:            {kappa: 2.0, theta: 0.09, xi: 0.30, rho: -0.50, v0: 0.09}
+      strong_neg_corr:          {kappa: 2.0, theta: 0.04, xi: 0.30, rho: -0.90, v0: 0.04}
+      near_feller:              {kappa: 1.5, theta: 0.04, xi: 0.34, rho: -0.70, v0: 0.02}
+
+sweeps:
+  lambda_pde: [0.0, 0.01, 0.1, 1.0]   # 0.0 IS the twin-network / Sakuma configuration (A2)
+
+info_matching:                  # A10: 3N dissolved — grow till Greek-accuracy plateau
+  n_price_points_multipliers: [1, 2, 3, 4, 5]
+  cap_multiplier: 5             # cap: 5N from the contract
+  accounting: fd_equivalent     # or raw_scalar — selectable by flag
+  fd_stencil_size: 5
+  labels_per_point: 4           # price + Delta + Gamma + Vega scalars at a rung3 point
+  capacity_control_width_mult: 2.0
+
+training_smoke: {steps: 20, lr: 1.0e-2, batch: 256}   # smoke tests only; real runs per contract
+
+training:                       # v6 full-run schedule (train.py / train_pinn.train_model). Tests override.
+  steps: 20000                  # matched-epochs budget (fixed across arms); --matched-epochs disables early stop
+  batch: 1024                   # price-point minibatch (seeded per-epoch permutation of the arm's train split)
+  n_pde: 4096                   # PDE collocation points, RESAMPLED FRESH PER EPOCH (Feller + anchor-excised)
+  lr: 3.0e-3
+  schedule: cosine              # cosine anneal lr -> cosine_to over `steps`
+  cosine_to: 3.0e-5
+  val_every: 500                # validation cadence in steps; patience counts these checks
+  patience: 10                  # non-improving val checks before early stop; best.pt = best-val model.
+                                # Early stop is on the ARM'S OWN normalized loss total on its val split:
+                                # arm-fair (each arm stops on its own objective). last.pt (matched_epochs)
+                                # is ALSO recorded for the contract's report_both (matched_epochs, matched_compute).
+  grad_clip: 1.0                # max grad-norm (0/null disables)
+
+arms:
+  # --- supervision ladder (A1): (D,G,V) = FFF / TFF / TTF / TTT, PDE on ---
+  rung0_price_only:        {}
+  rung1_delta:             {supervise_delta: true}
+  rung2_delta_gamma:       &rung2 {supervise_delta: true, supervise_gamma: true}
+  rung3_delta_gamma_vega:  &rung3 {supervise_delta: true, supervise_gamma: true, supervise_vega: true}
+  # --- structural rung + price-only controls ---
+  standard_pinn:           {}                                  # == rung0 loss flags; structural Greeks via autodiff
+  feedforward:             {use_pde: false, use_bc: false}     # pure price regressor
+  info_matched_baseline:   {}                                  # standard_pinn flags; n_price_points swept per info_matching
+  # --- A6 label-noise dose-response (base arm = rung3; only GAMMA labels vary) ---
+  sigma_000:               *rung3
+  sigma_010:               {<<: *rung3, gamma_label_noise_sigma: 0.10}
+  sigma_025:               {<<: *rung3, gamma_label_noise_sigma: 0.25}
+  sigma_050:               {<<: *rung3, gamma_label_noise_sigma: 0.50}
+  bs_gamma:                {<<: *rung3, label_source: bs_gamma}
+  shuffled:                {<<: *rung3, label_source: shuffled}
+  gradient_penalty_only:   {label_source: none, gradient_penalty: true}   # labels: none per contract YAML
+  # --- v6 completed factorial, 4th cell (DML-no-PDE): rung3 labels, NO residual machinery.
+  #     use_pde:false. Loss is IDENTICAL to lambda_pde_zero below — the PDE term is skipped when
+  #     (not use_pde) OR (lambda_pde==0.0), so both arms emit the same loss dict (no "pde" term).
+  #     Kept as separate arms only for provenance: sobolev_sans_pde = factorial OFF cell;
+  #     lambda_pde_zero = Sakuma twin-net A2 sweep endpoint.
+  sobolev_sans_pde:        {<<: *rung3, use_pde: false}
+  # --- v6 Vega-ablation view: same flags as rung2_delta_gamma, named for its role of
+  #     MEASURING Vega's marginal hedging contribution (the rung2->rung3 gap) ---
+  gamma_only:              *rung2
+  # --- A2 PDE-weight zero point (Sakuma twin-net); loss identical to sobolev_sans_pde above ---
+  lambda_pde_zero:         {<<: *rung3, lambda_pde: 0.0}
+  # --- optional vanna arm (schedule permitting; adds lambda_vanna*L_vanna) ---
+  optional_vanna_arm:      {<<: *rung3, supervise_vanna: true, lambda_vanna: 1.0}
+  # --- UDE arm (contract family "ude"): partial physics. PDE retained; a learned residual
+  #     g_phi(v) corrects the variance drift INSIDE pde_residual only. Price head + supervision
+  #     unchanged; the extra params live in the correction net (ude.py), logged separately. ---
+  ude:                     {use_pde: true, ude_correction: true}

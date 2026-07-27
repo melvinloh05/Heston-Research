@@ -1,0 +1,38 @@
+# Data / generated artifacts (large, regenerable from config+seed)
+data/
+outputs/
+runs/
+checkpoints/
+*.pt
+*.pth
+*.npz
+*.npy
+*.parquet
+*.csv
+*.h5
+ 
+# Plots / figures
+figures/
+*.png
+*.pdf
+*.svg
+ 
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+*.egg-info/
+ 
+# Logs / experiment tracking
+logs/
+*.log
+wandb/
+mlruns/
+ 
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

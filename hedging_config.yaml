@@ -1,0 +1,65 @@
+# =============================================================================
+# hedging_config.yaml — ENGINE SUPPLEMENT to the benchmark contract heston_benchmark_v6.yaml.
+# Engine-level parameters only (contract has none of these); never overrides
+# contract values. Seeds derive from contract meta (global_seed + 0..seeds_min-1).
+# =============================================================================
+
+contract:                      # the hedged instrument
+  S0: 100.0
+  K: 100.0
+  T: 0.25                      # = contract instrument tau0 (option initial maturity)
+  option_type: european_call
+
+horizon:                       # LIVE (P5): engine hedges to T' < tau0 and liquidates at T'
+  T_prime: 0.17                # A&T construction (contract hedging_simulation.horizon.T_prime)
+
+simulation:
+  n_paths: 10000               # production per-cell (contract paths.n_paths_per_cell);
+                               # smoke/tests override via _cfg(n_paths=...) in test_hedging_backtest.py
+  scheme: qe_andersen
+  psi_c: 1.5                   # QE quadratic/exponential switching threshold
+  paths_dir: null              # set to data/paths/<tag> after human promotion; when set, the engine LOADS frozen banks (bank_write) instead of resimulating
+
+rebalancing:
+  frequency_per_year: 252      # daily (dt=1/252≈0.003968); FIXED ACROSS ARMS — Greek accuracy is the only varied lever
+  charge_final_unwind: true
+
+hedge_option:                  # SECONDARY delta-gamma leg only
+  strike_rule: atm_at_inception
+  maturity_factor: 2.0         # T_hedge = maturity_factor * T (< 1 supported)
+  min_tau: 0.02                # no NEW option position this close to its own expiry
+  gamma_floor: 1.0e-6          # hedge Gamma at/below this -> delta-only fallback for the step
+
+misspecification:              # hedge-params = train-params + m * shift_at_m1
+  # magnitude=1.0 lands EXACTLY on the v6 confirmatory endpoint (xi 0.45 / rho -0.80);
+  # 0.5 is the mid severity point. shift_at_m1 chosen so m=1 hits the contract targets.
+  magnitudes: [0.0, 0.5, 1.0]
+  directions:
+    xi_up:    {param: xi,  shift_at_m1: 0.15}    # xi  0.30 -> 0.45 at magnitude 1
+    rho_down: {param: rho, shift_at_m1: -0.30}   # rho -0.50 -> -0.80 at magnitude 1
+    combined: {legs: [xi_up, rho_down]}
+
+smoothing_baseline:            # HEDGE-TIME "is it just smoothing?" control
+  applies_to: [standard_pinn]
+  ema_alpha: null              # removed: pure Whalley-Wilmott-style band per contract
+  no_trade_band: 0.02
+
+risk:
+  cvar_level: 0.95
+  loss_definition: "-PnL"      # CVaR95 = mean worst 5% of L = -PnL (contract cvar_convention)
+  bootstrap_B: 2000            # also the B of the paired per-path CVaR-diff bootstrap (confirmatory CI)
+  gap_floor_frac: 0.01         # gap_closed denominator floored at this fraction of |cvar_oracle| (fallback 1.0 absolute if oracle cvar ~ 0)
+  persist_pnl: false           # true -> write per-path PnL npz per cell (pnl_<run>/ next to the CSVs) for offline analysis
+
+pnl_convention:                # LIVE (P5); mirrors contract hedging_simulation.pnl_convention
+  initial_premium: theta_train_oracle_for_all_arms  # oracle-provider inception price overrides every arm's premium; rows carry premium_convention_ok
+  terminal_mark: true_dgp_price_at_T_prime          # Bates CF (Heston at lambda_j=0) / Merton series mark at tau0 - T'
+
+oracle_provider_name: oracle           # providers key for the oracle hedger (T_ex reference + gap_closed ceiling)
+baseline_provider_name: standard_pinn  # providers key for the gap_closed baseline
+
+overlay:                       # delta-path overlay diagnostic plot
+  n_paths: 64
+  path_idx: 0
+
+output_dir: results/hedging
