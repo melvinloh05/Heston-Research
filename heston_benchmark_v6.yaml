@@ -44,6 +44,7 @@ oracle_headroom_gate:
   decision_rule: >
     If spread < pre-registered 10% CVaR95 threshold at chosen frequency and TC tiers,
     RETUNE (rebalance frequency, misspecification severity) before M4. Non-optional.
+  spread_threshold_rel: 0.10   # C1 — was gate_headroom.py:361 literal; the "10%" named above
   motivation: "Sakuma Table 5 (oracle ~= network hedge) is the power warning."
   runs_before: all_training
 
@@ -108,7 +109,7 @@ splits:
   heldout_greek_and_hedging: [near_feller, strong_neg_corr]        # OOD type 1: BOTH metrics
   ood_models_hedging_only: [bates, merton]                          # OOD type 2: hedging PnL only
   tau_maturity_holdout: {enabled: true, role: sanity_check}
-  moneyness_wing_holdout: {enabled: true, role: sanity_check, gamma_metric: absolute_only}
+  moneyness_wing_holdout: {enabled: true, role: sanity_check, gamma_metric: absolute_only, moneyness_bounds: [0.75, 1.30]}  # bounds: C1 — was eval_greeks.py:45
 
 # -----------------------------------------------------------------------------
 # ORACLE  (3-way + 4th leg on feller-stressed points; vanna added)
@@ -172,6 +173,36 @@ loss:
   lambda_discipline: {tune_on: validation_only, assert_test_untouched: true, log_selected_values: true}
 
 # -----------------------------------------------------------------------------
+# LAMBDA SELECTION  (Q3 — sourcing decision, pre-registered before any run)
+# -----------------------------------------------------------------------------
+# Shared lambda_pde across arms is the correct control (one model class, identical
+# architecture/ansatz; see methods.ansatz_control) — the open question Q3 resolves is which
+# arm the SHARED value is sourced from, not whether to share it.
+lambda_selection:
+  lambda_delta: {value: 1.0, fixed: true, swept: false}       # train.py:_apply_lambdas — "fixed 1.0; not a swept axis"
+  lambda_pde:
+    source_arm: standard_pinn                                  # Q3 decision — was rung3_delta_gamma_vega (train.py:135)
+    rationale: >
+      Tuning a shared hyperparameter on the treatment arm (rung3) and applying it to the
+      baseline (standard_pinn) handicaps the baseline, for which the PDE residual is the
+      ONLY structural signal. Sourcing lambda_pde from standard_pinn's own validation score
+      is the conservative direction wrt the study's hypothesis.
+    candidates: [0.0, 0.01, 0.1, 1.0]                          # train.py:139-140 sweeps.lambda_pde default
+  lambda_gamma:
+    source_arm: rung3_delta_gamma_vega                          # at the lambda_pde fixed immediately above
+    candidates: [0.3, 1.0, 3.0]                                # train.py:141 — playbook pre-reg {0.3,1,3}
+  lambda_vega:
+    source_arm: rung3_delta_gamma_vega                          # at the lambda_pde fixed immediately above
+    candidates: [0.3, 1.0, 3.0]                                # train.py:142 — playbook pre-reg {0.3,1,3}
+  tune_on: validation_only
+  robustness_row:
+    description: >
+      The confirmatory contrast (rung3 vs standard_pinn) is ADDITIONALLY reported at the
+      rung3-sourced lambda_pde, so the sourcing choice can be shown to be immaterial to the
+      headline result (or shown not to be).
+    status: robustness_result_not_a_second_confirmatory_test    # Q3 — does not replace acceptance_thresholds.confirmatory_cell_pass
+
+# -----------------------------------------------------------------------------
 # LABEL-NOISE DOSE-RESPONSE  (correctness axis; margin_X dissolved)
 # -----------------------------------------------------------------------------
 label_noise_dose_response:
@@ -193,6 +224,7 @@ label_noise_dose_response:
 # -----------------------------------------------------------------------------
 information_matching:
   baseline_price_points: grow_until_greek_accuracy_plateaus
+  plateau_tol: 0.02   # C1 — was run_info_matching.py:62 PLATEAU_TOL; rel-improvement floor below which the curve reads as plateaued
   cap: 5N
   stencils: fd_equivalent_resolution        # derivative info recoverable if FD applied
   report: [saturation_curve, fd_equivalent_resolution_version, raw_scalar_count_version]
@@ -206,7 +238,16 @@ hedging_simulation:
   strategy: delta_only_underlying
   instrument: {type: european_call, S0: 100.0, K: 100.0, tau0: 0.25}
   horizon: {T_prime: 0.17, construction: "hedge to T' < T, liquidate at T' (A&T construction): bounds Gamma, avoids near-expiry ATM churn, stays in oracle-trusted tau"}
-  rebalancing: {frequency: daily, dt: 0.003968, fixed_across_arms: true}
+  # Q1: T_prime*frequency_per_year = 42.84 is not an integer, so a literal dt=0.003968 (1/252)
+  # was never achievable given T_prime=0.17. T_prime stays fixed (see horizon above); dt is
+  # now DERIVED, not declared. n_steps = round(T_prime * frequency_per_year); the realized
+  # grid is linspace(0, T_prime, n_steps+1) (Hedging_backtest.py:941; audit finding H1).
+  rebalancing:
+    frequency: daily
+    frequency_per_year: 252         # target frequency that produces n_steps below
+    n_steps: 43                     # Q1 — round(T_prime * frequency_per_year); Hedging_backtest.py:941
+    dt_realized: 0.003953488        # Q1 — T_prime / n_steps (252.94 rebalances/year, not 252)
+    fixed_across_arms: true         # unchanged: identical grid for every arm, no comparison affected
   paths: {n_paths_per_cell: 10000, common_random_numbers: ALL_ARMS}
   pnl_convention:
     self_financing: true
@@ -278,12 +319,21 @@ acceptance_thresholds:
   confirmatory_cell_pass: "misspec delta CVaR95 improvement >=10% relative AND paired-bootstrap 95% CI excludes 0 (combined,1% TC,baseline,rung3 vs standard_pinn)"
   headline_scale_free: fraction_of_baseline_to_oracle_gap_closed
   order_attribution: "rung2 beats rung1 at the cell, CI excludes 0; failure = honest null"
-  dose_response: "monotone (isotonic + rank correlation); flat = regularization null"
+  dose_response:                              # Q2 — was one-line prose "monotone (isotonic + rank correlation); flat = regularization null"
+    criteria: "Spearman rho > 0 (shape confirmed via isotonic fit) AND one-sided seed-bootstrap tail probability P(rho<=0) < bootstrap_tail_prob_max"
+    bootstrap_tail_prob_max: 0.05             # C1/Q2 — was analyze_results.py:450 spearman_p_max
+    tail_prob_definition: "a one-sided BOOTSTRAP TAIL PROBABILITY over seeds that rho<=0 -- NOT a classical p-value"
+    interpretation: >
+      Low-powered at 5-7 dose levels: a 'flat' verdict establishes ONLY "monotonicity not
+      demonstrated", NOT that the dose-response IS flat. These are different claims; the
+      memo must not conflate them.
+    conservatism: "this criterion is conservative wrt the study's hypothesis -- it can only move a verdict toward the pre-registered null"
   ood_gamma_rmse_reduction_min: 0.15
   ood_vega_rmse_reduction_min: 0.15           # Greek-accuracy leg
   price_parity_within: 0.10
   mechanism_falsifier: "0%-TC gap => robustness (i); zero-at-0% widening + T_ex->0 => cost (ii); T_ex unmoved rejects (ii). Both publishable. STATE BEFORE RESULTS."
   in_model_hedging: NOT_PASS_FAIL             # = (in-model x cost) 2x2 corner; must reproduce Sakuma null
+  sakuma_null_rel_tol: 0.02                   # C1 — was analyze_results.py:622 rel_tol; band for the in_model_hedging consistency check above
   seeds: {default: 5, confirmatory_cell: 10}
   tail_claim_requires: paired_bootstrap_over_CRN_paths_with_seed_variance_separated
 

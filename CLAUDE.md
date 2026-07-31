@@ -20,7 +20,9 @@ wins and the code changes.
   Δ,Γ,ν,vanna) and misspecified delta-only hedging CVaR95 (loss = −PnL) at TC ∈ {0, 0.01, 0.02}.
 - PnL convention: self-financing; initial premium = θ_train ORACLE price for ALL arms;
   terminal liability mark = true-DGP price at T′; hedge horizon T′ = 0.17 on the
-  (S0=100, K=100, τ0=0.25) call; rebalancing daily (dt = 0.003968), fixed across arms.
+  (S0=100, K=100, τ0=0.25) call; rebalancing daily, fixed across arms. `dt` is DERIVED, not
+  declared: `hedging_simulation.rebalancing.n_steps`/`dt_realized` (dt_realized=0.003953488,
+  not 1/252 — T′=0.17 doesn't divide evenly into daily steps; contract amendment Q1).
 - CRN: all arms hedge the SAME paths within a cell. Path banks are frozen artifacts.
 - Training sampling: Latin hypercube over κ∈[1,4], θ∈[0.02,0.12], ξ∈[0.20,0.60], ρ∈[−0.80,−0.20],
   v0∈[0.01,0.12]; REJECT Feller 2κθ/ξ² < 0.40; EXCISE balls of 10% relative radius around every
@@ -30,7 +32,11 @@ wins and the code changes.
   ratio in [0.40, 0.60]. Quantities: price, delta, gamma, vega, vanna. Mask points where legs
   disagree; mask is declared pre-training and must pass the three neutrality checks.
 - One model class; every arm is a PINNConfig. Identical architecture, identical ansatz/terminal
-  treatment across arms. λ selection on VALIDATION ONLY (LockedTestSet enforces).
+  treatment across arms. λ selection on VALIDATION ONLY (LockedTestSet enforces). Sourcing of
+  the shared λ_pde is a pre-registered decision, not a default: see `lambda_selection` in the
+  contract (λ_pde ← `standard_pinn`, λ_gamma/λ_vega ← `rung3_delta_gamma_vega`; contract
+  amendment Q3). Protocol-only until λ selection is rerun — `train.py:135` still sources
+  λ_pde from `rung3_delta_gamma_vega` pending that separate code change.
 - Seeds: 5 default, 10 on the confirmatory cell. Confirmatory cell = (combined perturbation,
   1% TC, baseline regime, rung3 vs standard_pinn).
 - Every run logs: config hash, seed, wall clock, param count, derivative-eval count, peak memory.
@@ -52,7 +58,14 @@ wins and the code changes.
 - Confirmatory pass: misspec delta CVaR95 improvement ≥10% relative AND paired-bootstrap 95% CI
   excludes 0, at the confirmatory cell.
 - Order attribution: rung2 beats rung1 at the cell, CI excludes 0.
-- Dose-response: monotone (isotonic fit + rank correlation); flat = regularization null.
+- Dose-response: Spearman ρ>0 (isotonic fit for shape) AND one-sided seed-bootstrap tail
+  probability P(ρ≤0) < `acceptance_thresholds.dose_response.bootstrap_tail_prob_max` (0.05,
+  NOT a classical p-value); flat = "monotonicity not demonstrated", NOT "is flat" — contract
+  amendment Q2. Sakuma-null consistency check band: `acceptance_thresholds.sakuma_null_rel_tol`
+  (0.02, contract amendment C1). Gate go/no-go threshold: `oracle_headroom_gate.
+  spread_threshold_rel` (0.10, C1). Moneyness wing bounds: `splits.moneyness_wing_holdout.
+  moneyness_bounds` (C1). Info-matching plateau tolerance: `information_matching.plateau_tol`
+  (0.02, C1).
 - OOD Greek RMSE: Γ and ν reduction ≥15% at price parity within 10%.
 - Mechanism: gap at 0% TC ⇒ robustness channel (i); zero-at-0% widening with TC and T_ex→0 ⇒
   cost channel (ii); T_ex unmoved kills (ii) regardless of PnL. Both readings publishable.
