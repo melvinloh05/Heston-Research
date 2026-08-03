@@ -81,6 +81,17 @@ _BANDWIDTH = (1.0, 0.1, 0.1)
 _DELTA_CLIP = (-0.05, 1.05)
 _SIGMA_REL_DEFAULT = (0.1, 0.2, 0.4, 0.8)
 
+# audit G2: what a non-zero clipped_frac means, stated once and reused by the
+# report and the run_gate result so a reader cannot meet the number without it.
+_CLIPPED_NOTE = (
+    "`clipped_frac` is the fraction of delta evaluations on which the "
+    f"[{_DELTA_CLIP[0]}, {_DELTA_CLIP[1]}] delta clip BOUND. The field amplitude "
+    "is calibrated on the UNCLIPPED field, so wherever the clip binds the "
+    "DELIVERED gamma error is smaller than the sigma_gamma this row is labelled "
+    "with: the spread is understated and the gate is conservative (the safe "
+    "direction for a go/no-go, but the sigma axis is then not the axis it is "
+    "labelled with). A value of 0 means the sigma axis is exact.")
+
 # ---------------------------------------------------------------------------
 # geometry helpers (contract-derived; no YAML edits, read-only consumption)
 # ---------------------------------------------------------------------------
@@ -210,6 +221,13 @@ class NoisyOracleProvider:
         if mode == "iid":
             self.sigma_delta = float(np.std(self.eta(*ref_states)))
             self._rng = np.random.default_rng([self.seed, _STREAM_IID])
+        # audit G2: `amp` is calibrated on the UNCLIPPED field and _DELTA_CLIP is
+        # applied afterwards, so wherever the clip binds the DELIVERED gamma error
+        # is smaller than sigma_gamma_target and the measured spread is understated
+        # (conservative, but the sigma axis is then not the axis it is labelled
+        # with). The clip is unchanged; these counters make a binding clip visible.
+        self._n_clipped = 0
+        self._n_delta = 0
 
     def _z(self, S, v, tau) -> tuple[np.ndarray, tuple]:
         """Range-normalized [n, 3] state matrix plus the broadcast shape."""
@@ -238,13 +256,28 @@ class NoisyOracleProvider:
         return (-self.amp * np.sqrt(2.0 / self._nf)
                 * (np.sin(phase) @ coef)).reshape(shape)
 
+    @property
+    def clipped_fraction(self) -> float:
+        """Fraction of delta evaluations _DELTA_CLIP actually bound on, over the
+        provider's whole life (NaN before the first evaluate). A non-zero value
+        means the delivered corruption was WEAKER than `sigma_gamma_target` on
+        that fraction of states, so the arm's spread is understated (audit G2).
+        Bookkeeping only — `evaluate` stays a pure function of state."""
+        if self._n_delta == 0:
+            return float("nan")
+        return self._n_clipped / self._n_delta
+
     def evaluate(self, S: np.ndarray, v: np.ndarray, tau: float,
                  K: float) -> dict:
         out = dict(self.base.evaluate(S, v, tau, K))
         delta = np.asarray(out["delta"], float)
         err = (self.eta(S, v, tau) if self.mode == "field"
                else self._rng.normal(0.0, self.sigma_delta, delta.shape))
-        out["delta"] = np.clip(delta + err, *_DELTA_CLIP)
+        raw = delta + err
+        lo, hi = _DELTA_CLIP
+        self._n_clipped += int(np.count_nonzero((raw < lo) | (raw > hi)))
+        self._n_delta += int(np.asarray(raw).size)
+        out["delta"] = np.clip(raw, lo, hi)
         return out
 
 # ---------------------------------------------------------------------------
@@ -316,9 +349,11 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
                        for sr in sigma_rel_list), key=lambda a: a[1])
     oracle_name = eng.get("oracle_provider_name", "oracle")
     providers = {oracle_name: base}
+    noisy_by_arm: dict[str, NoisyOracleProvider] = {}
     for label, _sr, sa in arms:
-        providers[f"noisy_{label}"] = NoisyOracleProvider(
+        noisy_by_arm[label] = NoisyOracleProvider(
             base, sa, gate_seed, ranges, ref, mode=mode)
+        providers[f"noisy_{label}"] = noisy_by_arm[label]
 
     rows = hb.run_headline(cfg, providers,
                            out_dir=os.path.join(out_dir, "engine"))
@@ -360,7 +395,11 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
                                         if len(grp) > 1 else 0.0),
                 "ci_excludes_zero_frac": float(np.mean(
                     [g["ci_excludes_zero"] for g in grp])),
-                "t_ex_mean": float(np.mean([g["t_ex"] for g in grp]))})
+                "t_ex_mean": float(np.mean([g["t_ex"] for g in grp])),
+                # per ARM over the whole run, repeated on each tc row: positions
+                # are built once per method and reused across tiers, so there is
+                # no per-tc clipping to report (audit G2).
+                "clipped_frac": noisy_by_arm[label].clipped_fraction})
     # smallest sigma_rel whose mean spread clears the pre-registered relative
     # threshold (contract oracle_headroom_gate.spread_threshold_rel) WITH every
     # seed's paired CI excluding 0
@@ -379,7 +418,10 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
     return {"records": records, "summary": summary, "decision": decision,
             "spread_threshold_rel": spread_threshold_rel,
             "rms_gamma": rms, "csv_path": csv_path,
-            "report_path": report_path, "rows": rows}
+            "report_path": report_path, "rows": rows,
+            "clipped_frac": {label: p.clipped_fraction
+                             for label, p in noisy_by_arm.items()},
+            "clipped_fraction_note": _CLIPPED_NOTE}
 
 
 def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
@@ -413,15 +455,17 @@ def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
         "cvar_oracle)",
         "",
         "| arm | sigma_rel | sigma_gamma | tc | spread_rel mean | seed std |"
-        " CI-excl-0 frac | t_ex mean |",
-        "|---|---|---|---|---|---|---|---|",
+        " CI-excl-0 frac | t_ex mean | clipped_frac |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for s in summary:
         lines.append(
             f"| {s['arm']} | {s['sigma_rel']:.4g} | "
             f"{s['sigma_gamma_abs']:.4g} | {s['tc']} | "
             f"{s['spread_rel_mean']:+.4f} | {s['spread_rel_seed_std']:.4f} | "
-            f"{s['ci_excludes_zero_frac']:.2f} | {s['t_ex_mean']:.4f} |")
+            f"{s['ci_excludes_zero_frac']:.2f} | {s['t_ex_mean']:.4f} | "
+            f"{s.get('clipped_frac', float('nan')):.4f} |")
+    lines += ["", _CLIPPED_NOTE]
     lines += [
         "",
         "## DECISION (per tc tier)",

@@ -155,6 +155,54 @@ def test_sigma_zero_reproduces_oracle():
     assert all(r_["t_ex"] == 0.0 for r_ in noisy)
 
 
+def test_binding_delta_clip_is_reported():
+    """G2: `amp` is calibrated on the UNCLIPPED field, and the [-0.05, 1.05]
+    clip is applied afterwards. Where it binds, the delivered gamma error is
+    smaller than sigma_gamma_target, so the measured spread is understated and
+    the gate is conservative — safe direction, wrong axis label. The clip is
+    NOT changed; it is made visible.
+
+    Deep-ITM/OTM states sit at delta ~ 1 and ~ 0, exactly where the bounds are.
+    """
+    S = np.concatenate([np.linspace(40.0, 60.0, 40),        # deep OTM: delta ~ 0
+                        np.linspace(160.0, 200.0, 40)])     # deep ITM: delta ~ 1
+    v = np.full(S.shape, 0.06)
+    tau = 0.10
+
+    p = gh.NoisyOracleProvider(_BASE, 3.0 * _RMS, 5, _RANGES, _CLOUD, "field")
+    assert p.clipped_fraction != p.clipped_fraction          # NaN before any eval
+    p.evaluate(S, v, tau, 100.0)
+    assert p.clipped_fraction > 0.0, (
+        "a binding clip must be visible: the delivered corruption is weaker "
+        "than the sigma_gamma the gate table is labelled with")
+    assert 0.0 < p.clipped_fraction <= 1.0
+
+    # sigma = 0 delivers exactly the oracle -> nothing can clip
+    p0 = gh.NoisyOracleProvider(_BASE, 0.0, 5, _RANGES, _CLOUD, "field")
+    p0.evaluate(S, v, tau, 100.0)
+    assert p0.clipped_fraction == 0.0
+
+
+def test_clipped_fraction_reaches_the_summary_and_report():
+    """The gate's own summary rows and headroom_report.md must carry it — the
+    audit's one unverifiable item was 'nothing measures or reports the clipped
+    fraction'."""
+    cfg = _cfg(n_paths=96, freq=252)
+    out = tempfile.mkdtemp()
+    res = gh.run_gate(cfg, sigma_rel_list=(0.1, 0.4), mode="field",
+                      out_dir=out, n_cloud_states=500, n_cloud_paths=96)
+    assert all("clipped_frac" in s for s in res["summary"])
+    assert all(0.0 <= s["clipped_frac"] <= 1.0 for s in res["summary"])
+    # per ARM, not per tier: positions are built once per method, never per tc
+    by_arm = {}
+    for s in res["summary"]:
+        by_arm.setdefault(s["arm"], set()).add(s["clipped_frac"])
+    assert all(len(v) == 1 for v in by_arm.values())
+    assert "clipped_frac" in res["clipped_fraction_note"]
+    text = Path(res["report_path"]).read_text()
+    assert "clipped" in text
+
+
 if __name__ == "__main__":
     for fn in sorted(k for k in dir() if k.startswith("test_")):
         globals()[fn]()

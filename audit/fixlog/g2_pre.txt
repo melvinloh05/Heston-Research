@@ -1,0 +1,42 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_____________________ test_binding_delta_clip_is_reported ______________________
+
+    def test_binding_delta_clip_is_reported():
+        """G2: `amp` is calibrated on the UNCLIPPED field, and the [-0.05, 1.05]
+        clip is applied afterwards. Where it binds, the delivered gamma error is
+        smaller than sigma_gamma_target, so the measured spread is understated and
+        the gate is conservative — safe direction, wrong axis label. The clip is
+        NOT changed; it is made visible.
+    
+        Deep-ITM/OTM states sit at delta ~ 1 and ~ 0, exactly where the bounds are.
+        """
+        S = np.concatenate([np.linspace(40.0, 60.0, 40),        # deep OTM: delta ~ 0
+                            np.linspace(160.0, 200.0, 40)])     # deep ITM: delta ~ 1
+        v = np.full(S.shape, 0.06)
+        tau = 0.10
+    
+        p = gh.NoisyOracleProvider(_BASE, 3.0 * _RMS, 5, _RANGES, _CLOUD, "field")
+>       assert p.clipped_fraction != p.clipped_fraction          # NaN before any eval
+E       AttributeError: 'NoisyOracleProvider' object has no attribute 'clipped_fraction'
+
+test_gate_headroom.py:173: AttributeError
+_____________ test_clipped_fraction_reaches_the_summary_and_report _____________
+
+    def test_clipped_fraction_reaches_the_summary_and_report():
+        """The gate's own summary rows and headroom_report.md must carry it — the
+        audit's one unverifiable item was 'nothing measures or reports the clipped
+        fraction'."""
+        cfg = _cfg(n_paths=96, freq=252)
+        out = tempfile.mkdtemp()
+        res = gh.run_gate(cfg, sigma_rel_list=(0.1, 0.4), mode="field",
+                          out_dir=out, n_cloud_states=500, n_cloud_paths=96)
+>       assert all("clipped_frac" in s for s in res["summary"])
+E       assert False
+E        +  where False = all(<generator object test_clipped_fraction_reaches_the_summary_and_report.<locals>.<genexpr> at 0x1464b9d80>)
+
+test_gate_headroom.py:194: AssertionError
+=========================== short test summary info ============================
+FAILED test_gate_headroom.py::test_binding_delta_clip_is_reported - Attribute...
+FAILED test_gate_headroom.py::test_clipped_fraction_reaches_the_summary_and_report
+2 failed, 6 deselected in 2.02s

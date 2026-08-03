@@ -1,0 +1,14 @@
+FIELD mode clipped_frac per arm: {'s0.1': 0.061364, 's0.2': 0.215253, 's0.4': 0.779978, 's0.8': 0.959984}
+  sigma_rel=0.1 tc=0.0   spread_rel_mean=+1.1340 clipped_frac=0.0614
+  sigma_rel=0.1 tc=0.01  spread_rel_mean=+0.4459 clipped_frac=0.0614
+  sigma_rel=0.1 tc=0.02  spread_rel_mean=+0.2200 clipped_frac=0.0614
+  sigma_rel=0.2 tc=0.0   spread_rel_mean=+2.3987 clipped_frac=0.2153
+  sigma_rel=0.2 tc=0.01  spread_rel_mean=+1.0652 clipped_frac=0.2153
+  sigma_rel=0.2 tc=0.02  spread_rel_mean=+0.6211 clipped_frac=0.2153
+  sigma_rel=0.4 tc=0.0   spread_rel_mean=+4.5650 clipped_frac=0.7800
+  sigma_rel=0.4 tc=0.01  spread_rel_mean=+2.0510 clipped_frac=0.7800
+  sigma_rel=0.4 tc=0.02  spread_rel_mean=+1.2720 clipped_frac=0.7800
+  sigma_rel=0.8 tc=0.0   spread_rel_mean=+6.3050 clipped_frac=0.9600
+  sigma_rel=0.8 tc=0.01  spread_rel_mean=+2.8391 clipped_frac=0.9600
+  sigma_rel=0.8 tc=0.02  spread_rel_mean=+1.7626 clipped_frac=0.9600
+IID   mode clipped_frac per arm: {'s0.1': 0.001408, 's0.8': 0.117278}
