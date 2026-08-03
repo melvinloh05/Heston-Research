@@ -1,0 +1,9 @@
+.                                                                        [100%]
+=============================== warnings summary ===============================
+test_train.py::test_select_lambdas_is_staged_and_records_its_source_arms
+test_train.py::test_select_lambdas_is_staged_and_records_its_source_arms
+  /Users/melvin/Documents/Heston Research/train_pinn.py:285: RuntimeWarning: labels artifact has no 'split' key; falling back to an 80/20 by-parameter-point split with rng [seed, 21]
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 13 deselected, 2 warnings in 2.19s

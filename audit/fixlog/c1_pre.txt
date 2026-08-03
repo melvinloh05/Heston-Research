@@ -1,0 +1,10 @@
+
+==================================== ERRORS ====================================
+_________________ ERROR collecting test_contract_thresholds.py _________________
+test_contract_thresholds.py:38: in <module>
+    TH = hb.contract_thresholds(CFG)
+E   AttributeError: module 'Hedging_backtest' has no attribute 'contract_thresholds'
+=========================== short test summary info ============================
+ERROR test_contract_thresholds.py - AttributeError: module 'Hedging_backtest'...
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.89s

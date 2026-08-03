@@ -1,0 +1,37 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_select_lambdas_is_staged_and_records_its_source_arms ___________
+
+npz = '/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-16/train_labels0/labels.npz'
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-16/test_select_lambdas_is_staged_0')
+
+    def test_select_lambdas_is_staged_and_records_its_source_arms(npz, tmp_path):
+        """Q3: lambda_pde is selected on the BASELINE arm (for which the PDE residual is the
+        only structural signal), then (lambda_gamma, lambda_vega) on rung3 at that fixed
+        lambda_pde. Both source arms are recorded IN the artifact, and the one shared
+        lambda_pde reaches the baseline and the treatment arm identically."""
+        lam_sel = yaml.safe_load(open(CONTRACT))["lambda_selection"]
+        out = tmp_path / "lam_staged.yaml"
+        res = train.main(["--select-lambdas", "--seed", "0", "--data", npz,
+                          "--pinn-cfg", CFG, "--contract", CONTRACT, "--out", str(out),
+                          "--cand-pde", "0.1,1.0", "--cand-gamma", "1.0",
+                          "--cand-vega", "0.3,1.0", "--steps", "6"])
+        lam = yaml.safe_load(out.read_text())
+    
+        # provenance lives in the artifact, and matches the contract's pre-registered sourcing
+>       assert lam["sources"]["lambda_pde"] == lam_sel["lambda_pde"]["source_arm"]
+E       KeyError: 'sources'
+
+test_train.py:344: KeyError
+----------------------------- Captured stdout call -----------------------------
+selected lambda_pde=1.0 lambda_gamma=1.0 lambda_vega=0.3 (lambda_delta fixed 1.0); scored 4 combos on validation
+wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-16/test_select_lambdas_is_staged_0/lam_staged.yaml
+=============================== warnings summary ===============================
+test_train.py::test_select_lambdas_is_staged_and_records_its_source_arms
+  /Users/melvin/Documents/Heston Research/train_pinn.py:285: RuntimeWarning: labels artifact has no 'split' key; falling back to an 80/20 by-parameter-point split with rng [seed, 21]
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test_train.py::test_select_lambdas_is_staged_and_records_its_source_arms
+1 failed, 13 deselected, 1 warning in 2.26s

@@ -1,0 +1,30 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_confirmatory_requires_the_preregistered_seed_count ____________
+
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-8/test_confirmatory_requires_the0')
+
+    def test_confirmatory_requires_the_preregistered_seed_count(tmp_path):
+        """A3: run_hedging is resumable, so a PARTIALLY complete confirmatory directory
+        is a normal on-disk state. It must not yield a fully-formed 'pass'."""
+        n_req = ar._default_thresholds()["seeds_confirmatory_cell"]
+        d = tmp_path / "pnl_partial"
+        gen = _pnl_pass(1.0)                                 # a would-be PASS, on 3 seeds
+        for s in range(3):
+            cell = gen(s, None)
+            keys = {}
+            for tc in (0.0, 0.01, 0.02):
+                keys[ar._pnl_key("rung3", tc)] = cell["rung3"]
+                keys[ar._pnl_key("standard_pinn", tc)] = cell["standard"]
+            _write_cell(d, s, _misspec_tag(1.0), keys)
+    
+        v = ar.confirmatory_cell(d, tc=0.01, n_boot=200, seed=3)
+>       assert v["verdict"] == "null"
+E       AssertionError: assert 'pass' == 'null'
+E         - null
+E         + pass
+
+test_analyze_results.py:180: AssertionError
+=========================== short test summary info ============================
+FAILED test_analyze_results.py::test_confirmatory_requires_the_preregistered_seed_count
+1 failed, 19 deselected in 0.16s

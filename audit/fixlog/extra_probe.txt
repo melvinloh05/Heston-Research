@@ -1,0 +1,4 @@
+realized dt = 0.003953488; contract dt_realized 0.003953488; |diff| 3.72e-10
+vs OLD declared 1/252 = 0.003968254; |diff| 1.48e-05 (> 1e-6 -> test would FAIL pre-amendment)
+regime=baseline                 feller=1.778 states=5504 saw exact v==0: False
+regime=feller_violating_volvol  feller=0.444 states=5504 saw exact v==0: True

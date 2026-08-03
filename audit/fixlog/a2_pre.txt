@@ -1,0 +1,23 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________ test_mechanism_wrong_direction_gap_is_not_a_channel ______________
+
+    def test_mechanism_wrong_direction_gap_is_not_a_channel():
+        """A2: the gaps are rung3 - standard in LOSS units, so a CI strictly ABOVE 0
+        means rung3 is significantly WORSE. Neither channel may be credited on it.
+    
+        Each case below is the exact MIRROR of a pattern above, so if the reading were
+        sign-blind it would return the same affirmative label."""
+        # (i)-shaped but wrong-signed: significant tc=0 gap with rung3 WORSE
+        worse_i = ar._mechanism_reading(
+            [_gap(0.0, +1.0, +0.5, +1.5), _gap(0.02, +1.0, +0.5, +1.5)],
+            _tex(-0.1, -0.5, 0.3))
+>       assert worse_i["reading"] == "null" and worse_i["present_i"] is False
+E       AssertionError: assert ('channel_i' == 'null'
+E         - null
+E         + channel_i)
+
+test_analyze_results.py:415: AssertionError
+=========================== short test summary info ============================
+FAILED test_analyze_results.py::test_mechanism_wrong_direction_gap_is_not_a_channel
+1 failed, 18 deselected in 0.10s
