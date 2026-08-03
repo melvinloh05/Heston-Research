@@ -78,6 +78,11 @@ def subsample_train(train_ds: ArmDataset, n_rows: int, seed: int) -> ArmDataset:
     calls with the same (dataset, n_rows, seed) are bit-identical. Capped at the frozen row
     count — no new labels are invented. Returns a shallow copy sharing everything but the
     row-sliced `.data`/`.n_rows` (so iter_minibatches / train_model see the smaller budget).
+
+    The cap is REPORTED, never silent (audit I1): the returned view carries
+    `subsample_requested` and `subsample_capped`, because a rung the artifact cannot fill
+    trains on data bit-identical to the rung below it and flattens the saturation curve by
+    construction — indistinguishable, downstream, from a real information plateau.
     """
     n_keep = min(int(n_rows), train_ds.n_rows)
     perm = np.random.default_rng([int(seed), 40961]).permutation(train_ds.n_rows)
@@ -85,6 +90,8 @@ def subsample_train(train_ds: ArmDataset, n_rows: int, seed: int) -> ArmDataset:
     sub = copy.copy(train_ds)
     sub.data = {k: v.index_select(0, idx).contiguous() for k, v in train_ds.data.items()}
     sub.n_rows = int(idx.numel())
+    sub.subsample_requested = int(n_rows)
+    sub.subsample_capped = bool(n_keep < int(n_rows))
     return sub
 
 
@@ -177,13 +184,15 @@ def _write_csv(path, cols, rows) -> None:
 
 
 PERSEED_COLS = ["multiplier", "width_mult", "seed", "config_hash", "n_price_points",
-                "n_train_rows", "fd_equivalent_budget", "raw_scalar_budget",
+                "n_train_rows", "n_train_rows_requested", "subsample_capped",
+                "fd_equivalent_budget", "raw_scalar_budget",
                 "gamma_rmse", "gamma_rel_rmse", "delta_rel_rmse", "vega_rel_rmse",
                 "price_rel_rmse", "wall_clock_s", "param_count", "derivative_evals",
                 "peak_memory_bytes", "epochs", "steps"]
 
 AGG_COLS = ["multiplier", "width_mult", "n_price_points", "n_train_rows_mean",
-            "fd_equivalent_budget", "raw_scalar_budget", "accounting", "n_seeds",
+            "subsample_capped", "fd_equivalent_budget", "raw_scalar_budget",
+            "accounting", "n_seeds",
             "gamma_rel_rmse_mean", "gamma_rel_rmse_std", "gamma_rmse_mean",
             "delta_rel_rmse_mean", "vega_rel_rmse_mean", "price_rel_rmse_mean",
             "rel_improvement_vs_prev", "is_plateau", "plateau_multiplier"]
@@ -228,6 +237,10 @@ def build_paragraph(contract: dict, plat: dict, agg_rows, accounting: str) -> st
     w1 = lut.get((pm, 1.0))
     w2 = lut.get((pm, 2.0))
     reached = ("reached" if plat["plateau_reached"]
+               else f"NOT demonstrated: the label artifact could not fill the rungs "
+                    f"{plat['capped_rungs']}, which therefore trained on bit-identical rows "
+                    f"— the flat segment is a ROW-CAP artifact, not saturation"
+               if plat.get("plateau_capped")
                else "NOT reached within the 5N cap; the plateau is pinned at the cap")
     lines = [
         f"Information-matching saturation sweep for `{SATURATED_ARM}` (price-only baseline). "
@@ -293,9 +306,10 @@ def _budget_sidecar(seed, pm, N, plat, sat_curve, plateau_row, tol, cap, account
     """The auditable per-seed budget record written beside best.pt.
 
     Carries the SELECTED multiplier, the full seed-aggregated saturation curve, the declared
-    plateau criterion, and — when the plateau was never reached within the cap — a LOUD note
-    that the budget is pinned at the cap (NOT the N budget)."""
+    plateau criterion, and — when the plateau was never reached within the cap, or when the
+    label artifact could not FILL a rung at or below it (audit I1) — a LOUD note saying which."""
     reached = bool(plat["plateau_reached"])
+    capped = [int(m) for m in plat.get("capped_rungs", [])]
     return {
         "arm": SATURATED_ARM,
         "seed": int(seed),
@@ -308,6 +322,8 @@ def _budget_sidecar(seed, pm, N, plat, sat_curve, plateau_row, tol, cap, account
         "cap_multiplier": int(cap),
         "plateau_reached": reached,
         "plateau_pinned_at_cap": (not reached),
+        "data_capped_multipliers": capped,
+        "plateau_capped": bool(plat.get("plateau_capped", False)),
         "plateau_tol": float(tol),
         "plateau_criterion": (
             f"smallest m>=2 whose mean-over-seeds validation Gamma rel-RMSE improvement over "
@@ -320,6 +336,10 @@ def _budget_sidecar(seed, pm, N, plat, sat_curve, plateau_row, tol, cap, account
         "data_manifest_sha256": dsha,
         "saturation_curve": sat_curve,
         "note": (
+            f"BUDGET CAPPED BY THE LABEL ARTIFACT at multipliers {capped}: those rungs "
+            f"trained on bit-identical rows, so the flat curve at or below m={int(pm)} is a "
+            f"row-cap artifact, NOT an information plateau. Grow the artifact before "
+            f"reporting a saturation budget." if plat.get("plateau_capped") else
             f"PLATEAU NOT REACHED within the {cap}N cap: budget is PINNED at the cap ({cap}N), "
             f"NOT the N budget — treat the plateau as a lower bound." if not reached else
             "plateau reached; budget is the smallest saturating multiplier"),
@@ -434,6 +454,8 @@ def run_saturation_sweep(data: str, seeds, out_dir: str, *,
         comp = runlog["compute"]
         row = {"seed": seed, "n_price_points": cfg.n_price_points,
                "n_train_rows": train_ds.n_rows,
+               "n_train_rows_requested": train_ds.subsample_requested,
+               "subsample_capped": train_ds.subsample_capped,
                "config_hash": config_hash(cfg, seed, dsha, None),
                "fd_equivalent_budget": train_ds.n_rows * fd_stencil,
                "raw_scalar_budget": train_ds.n_rows * labels_per_point,
@@ -465,6 +487,26 @@ def run_saturation_sweep(data: str, seeds, out_dir: str, *,
     curve = sorted((r for r in agg if r["width_mult"] == 1.0), key=lambda r: r["multiplier"])
     plat = plateau_multiplier([r["multiplier"] for r in curve],
                               [r["gamma_rel_rmse_mean"] for r in curve], tol)
+
+    # I1: a rung the frozen artifact could not FILL trains on data bit-identical to the rung
+    # below it, so the curve is flat there BY CONSTRUCTION. A plateau at or below such a rung
+    # bounds what the LABEL ARTIFACT contains, not "what THIS architecture/protocol extracts
+    # from prices" (the contract's wording) — it is not a demonstrated plateau and is refused
+    # as one. Capping ABOVE the plateau index is harmless: the plateau fired on full rungs.
+    order = [r["multiplier"] for r in curve]
+    plat["capped_rungs"] = sorted({r["multiplier"] for r in perseed
+                                   if r["width_mult"] == 1.0 and r["subsample_capped"]})
+    binding = [m for m in plat["capped_rungs"] if order.index(m) <= plat["plateau_index"]]
+    plat["plateau_capped"] = bool(binding)
+    if binding:
+        plat["plateau_reached"] = False
+        warnings.warn(
+            f"[info-matching] the training split was capped at multipliers {binding} (the "
+            f"frozen artifact holds fewer rows than the ladder requested): those rungs trained "
+            f"on bit-identical data, so the flat segment at or below m="
+            f"{plat['plateau_multiplier']} is a ROW-CAP artifact, not an information plateau. "
+            f"plateau_reached forced to False — grow the label artifact (or shrink N) before "
+            f"reporting a saturation budget.", RuntimeWarning)
 
     # capacity control: retrain the plateau rung at 2x width, same seeds/subsample
     pm = plat["plateau_multiplier"]
@@ -509,14 +551,16 @@ def run_saturation_sweep(data: str, seeds, out_dir: str, *,
     checkpoints = _persist_plateau_checkpoints(
         ckpt_root, seeds, pm, cfg_by_m, best_states, dsha, N, plat, sat_curve,
         plateau_rows, tol, cap, accounting)
-    if not plat["plateau_reached"]:
+    if not plat["plateau_reached"] and not plat["plateau_capped"]:
         warnings.warn(
             f"[info-matching] plateau NOT reached within the {cap}N cap: persisting the "
             f"CAP ({cap}N) model as info_matched_baseline (budget pinned at the cap, NOT N).",
             RuntimeWarning)
 
     print(f"[info-matching] N={N}, multipliers={mults} (cap {cap}), seeds={seeds}; "
-          f"plateau m={pm} ({'reached' if plat['plateau_reached'] else 'CAP, not reached'}). "
+          f"plateau m={pm} ({'reached' if plat['plateau_reached'] else 'ROW-CAP ARTIFACT, '
+                             'not a plateau' if plat['plateau_capped'] else
+                             'CAP, not reached'}). "
           f"Wrote {', '.join(p.name for p in paths.values())} to {out}; "
           f"persisted {len(checkpoints)} best.pt under "
           f"{Path(ckpt_root) / _ckpt_arm_dir()}/s<seed>/.")
@@ -541,6 +585,7 @@ def _aggregate(perseed, accounting) -> list[dict]:
         nrows_mean, _ = _agg([r["n_train_rows"] for r in rs])
         rows.append({"multiplier": m, "width_mult": w, "n_price_points": rs[0]["n_price_points"],
                      "n_train_rows_mean": nrows_mean, "accounting": accounting,
+                     "subsample_capped": any(r["subsample_capped"] for r in rs),
                      "fd_equivalent_budget": rs[0]["fd_equivalent_budget"],
                      "raw_scalar_budget": rs[0]["raw_scalar_budget"], "n_seeds": len(rs),
                      "gamma_rel_rmse_mean": g_mean, "gamma_rel_rmse_std": g_std,

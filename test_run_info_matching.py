@@ -156,6 +156,57 @@ def test_wiring_smoke_writes_all_outputs(npz, tmp_path):
     assert wording in summary and summary == res["paragraph"] + "\n"
 
 
+def test_row_cap_cannot_masquerade_as_a_plateau(npz, tmp_path):
+    """I1: when the frozen artifact holds fewer rows than the ladder requests, the top
+    rungs train on BIT-IDENTICAL data and the Gamma curve is flat BY CONSTRUCTION.
+
+    A plateau at or below a capped rung bounds what the LABEL ARTIFACT contains, not
+    what the architecture extracts from prices — the sweep must refuse to report it as
+    a reached plateau."""
+    out = tmp_path / "capped_run"
+    base_n = 10_000                                          # >> the fixture's train rows
+    with pytest.warns(RuntimeWarning, match="capped"):
+        res = rim.run_saturation_sweep(
+            npz, seeds=[0], out_dir=str(out), pinn_cfg=CFG, contract=CONTRACT,
+            steps=16, multipliers=[1, 2], base_n_price_points=base_n,
+            train_overrides={"n_pde": 64, "batch": 64, "val_every": 8})
+
+    plat = res["plateau"]
+    assert plat["plateau_reached"] is False                  # NOT a demonstrated plateau
+    assert plat["plateau_capped"] is True
+    assert plat["capped_rungs"] == [1, 2]
+
+    # every capped rung is visible in the artifacts, per seed and on the curve
+    with open(out / "saturation_curve_per_seed.csv", newline="") as fh:
+        ps = list(csv.DictReader(fh))
+    assert ps and all(r["subsample_capped"] == "True" for r in ps)
+    assert all(int(r["n_train_rows"]) < int(r["n_train_rows_requested"]) for r in ps)
+    with open(out / "saturation_curve.csv", newline="") as fh:
+        agg = list(csv.DictReader(fh))
+    assert any(r["subsample_capped"] == "True" for r in agg)
+
+    # ... and the sidecar the downstream sweep reads says so too
+    rec = json.loads((out / "info_matched_baseline" / "s0" /
+                      rim.BUDGET_SIDECAR).read_text())
+    assert rec["data_capped_multipliers"] == [1, 2]
+    assert "CAPPED" in rec["note"]
+
+
+def test_uncapped_ladder_reports_no_capping(npz, tmp_path):
+    """The control: a ladder the artifact CAN fill reports capped=False everywhere, so
+    the flag discriminates rather than always firing."""
+    out = tmp_path / "uncapped_run"
+    res = rim.run_saturation_sweep(
+        npz, seeds=[0], out_dir=str(out), pinn_cfg=CFG, contract=CONTRACT,
+        steps=16, multipliers=[1, 2], base_n_price_points=4,
+        train_overrides={"n_pde": 64, "batch": 64, "val_every": 8})
+    assert res["plateau"]["capped_rungs"] == []
+    assert res["plateau"]["plateau_capped"] is False
+    with open(out / "saturation_curve_per_seed.csv", newline="") as fh:
+        ps = list(csv.DictReader(fh))
+    assert ps and all(r["subsample_capped"] == "False" for r in ps)
+
+
 def test_cli_smoke(npz, tmp_path):
     out = tmp_path / "cli_run"
     res = rim.main(["--data", npz, "--out-dir", str(out), "--pinn-cfg", CFG,
