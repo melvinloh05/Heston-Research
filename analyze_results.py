@@ -61,7 +61,7 @@ DOSE_ARMS = ("sigma_000", "sigma_010", "sigma_025", "sigma_050",
              "bs_gamma", "shuffled", "gradient_penalty_only")
 _GRADPEN = "gradient_penalty_only"
 
-VERDICT_COLS = ["threshold_id", "cell", "statistic", "ci_lo", "ci_hi",
+VERDICT_COLS = ["threshold_id", "cell", "n_seeds", "statistic", "ci_lo", "ci_hi",
                 "verdict", "notes"]
 DOSE_COLS = ["arm", "label_source", "gamma_label_noise_sigma", "label_error",
              "cvar_mean", "cvar_seed_std", "n_seeds", "isotonic_fit", "is_reference"]
@@ -317,9 +317,12 @@ def paired_ci_from_npz(cell_dir, arm_a: str, arm_b: str, tc,
 # ---------------------------------------------------------------------------
 
 def _verdict(threshold_id: str, cell: str, statistic, ci, verdict: str,
-             notes: str) -> dict:
+             notes: str, n_seeds=None) -> dict:
+    """One verdict record. `n_seeds` is a STRUCTURED column (audit A3): the seed
+    count a verdict was computed on must be readable without parsing `notes`."""
     lo, hi = (ci if ci is not None else (float("nan"), float("nan")))
     return {"threshold_id": threshold_id, "cell": cell,
+            "n_seeds": "" if n_seeds is None else int(n_seeds),
             "statistic": float(statistic) if statistic is not None else float("nan"),
             "ci_lo": float(lo), "ci_hi": float(hi),
             "verdict": verdict, "notes": notes}
@@ -333,10 +336,18 @@ def confirmatory_cell(pnl_dir, *, thresholds: dict | None = None,
                       tc: float | None = None, level: float | None = None,
                       n_boot: int | None = None, seed: int | None = None,
                       arm: str = "rung3", baseline: str | None = None,
-                      rel_threshold: float | None = None) -> dict:
+                      rel_threshold: float | None = None,
+                      n_seeds_required: int | None = None) -> dict:
     """Confirmatory pass: rung3 vs standard_pinn at (combined, m=1.0, tc=1%), 10
     seeds. PASS iff pooled-stratified rel improvement >= rel_threshold AND the
-    pooled CI on the CVaR difference excludes 0 (on the improvement side).
+    pooled CI on the CVaR difference excludes 0 (on the improvement side) AND the
+    cell carries the pre-registered seed count.
+
+    The seed count is a CONDITION, not a footnote (audit A3): run_hedging is
+    resumable, so a partially-complete confirmatory directory is a normal on-disk
+    state and would otherwise yield a fully-formed 'pass' on an under-powered seed
+    set. A short cell is 'null' (not evaluated), never 'fail' — nothing about the
+    hypothesis has been tested.
 
     Every threshold defaults to the CONTRACT (`thresholds` / _default_thresholds),
     never to a module literal."""
@@ -344,22 +355,29 @@ def confirmatory_cell(pnl_dir, *, thresholds: dict | None = None,
     tc = _pick(tc, th, "confirmatory_tc")
     baseline = _pick(baseline, th, "baseline_arm")
     rel_threshold = _pick(rel_threshold, th, "confirmatory_rel_threshold")
+    n_req = int(_pick(n_seeds_required, th, "seeds_confirmatory_cell"))
     res = paired_ci_from_npz(pnl_dir, arm, baseline, tc, level, n_boot, seed,
                              slug_filter=_MISSPEC_FILTER, thresholds=th)
     p = res["pooled"]
     rel = p["rel_improvement"]
+    n_seeds = int(res["n_seeds"])
     ok_ci = _excludes_zero(p["ci_lo"], p["ci_hi"]) and p["ci_hi"] < 0.0
     ok_rel = math.isfinite(rel) and rel >= rel_threshold
-    verdict = "pass" if (ok_ci and ok_rel) else "fail"
-    notes = (f"{res['n_seeds']} seeds; pooled rel improvement={rel:.4f} "
+    ok_seeds = n_seeds == n_req
+    verdict = ("null" if not ok_seeds else "pass" if (ok_ci and ok_rel) else "fail")
+    notes = (f"{n_seeds} seeds; pooled rel improvement={rel:.4f} "
              f"(threshold {rel_threshold:.2f}: {'met' if ok_rel else 'not met'}); "
              f"pooled CVaR diff CI=[{p['ci_lo']:.4g}, {p['ci_hi']:.4g}] "
              f"({'excludes' if ok_ci else 'includes'} 0); statistic column is the "
              f"pooled rel improvement, CI columns are the pooled CVaR-diff CI. "
              f"per-seed mean rel={res['per_seed_summary']['rel_improvement_mean']:.4f}"
              f"+/-{res['per_seed_summary']['rel_improvement_seed_std']:.4f}.")
+    if not ok_seeds:
+        notes = (f"NOT EVALUATED: {n_seeds} of the pre-registered {n_req} seeds "
+                 f"present (meta.seeds_confirmatory_cell) — the confirmatory cell is "
+                 f"incomplete, so no pass/fail is claimed. " + notes)
     return _verdict("confirmatory_cell", f"combined m=1.0 tc={tc}", rel,
-                    (p["ci_lo"], p["ci_hi"]), verdict, notes)
+                    (p["ci_lo"], p["ci_hi"]), verdict, notes, n_seeds=n_seeds)
 
 
 def order_attribution(pnl_dir, *, thresholds: dict | None = None,
@@ -383,7 +401,8 @@ def order_attribution(pnl_dir, *, thresholds: dict | None = None,
              f"CI=[{p['ci_lo']:.4g}, {p['ci_hi']:.4g}]; rel={p['rel_improvement']:.4f}. "
              + note)
     return _verdict("order_attribution", f"rung2-vs-rung1 combined m=1.0 tc={tc}",
-                    p["diff"], (p["ci_lo"], p["ci_hi"]), verdict, notes)
+                    p["diff"], (p["ci_lo"], p["ci_hi"]), verdict, notes,
+                    n_seeds=res["n_seeds"])
 
 
 # ---------------------------------------------------------------------------
@@ -708,7 +727,8 @@ def sakuma_null_consistency(pnl_dir, *, thresholds: dict | None = None,
              f"[{p['ci_lo']:.4g}, {p['ci_hi']:.4g}]. "
              f"{'CI covers 0 / |rel|<%.2f -> Sakuma null reproduced' % rel_tol if consistent else 'in-model gap present -> FLAG (unexpected under the null)'}")
     return _verdict("sakuma_null_consistency", f"combined m=0.0 tc={tc}", rel,
-                    (p["ci_lo"], p["ci_hi"]), verdict, notes)
+                    (p["ci_lo"], p["ci_hi"]), verdict, notes,
+                    n_seeds=res["n_seeds"])
 
 
 # ---------------------------------------------------------------------------

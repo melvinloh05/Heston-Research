@@ -162,6 +162,32 @@ def test_confirmatory_pass_and_fail(tmp_path):
     assert vf["verdict"] == "fail"
 
 
+def test_confirmatory_requires_the_preregistered_seed_count(tmp_path):
+    """A3: run_hedging is resumable, so a PARTIALLY complete confirmatory directory
+    is a normal on-disk state. It must not yield a fully-formed 'pass'."""
+    n_req = ar._default_thresholds()["seeds_confirmatory_cell"]
+    d = tmp_path / "pnl_partial"
+    gen = _pnl_pass(1.0)                                 # a would-be PASS, on 3 seeds
+    for s in range(3):
+        cell = gen(s, None)
+        keys = {}
+        for tc in (0.0, 0.01, 0.02):
+            keys[ar._pnl_key("rung3", tc)] = cell["rung3"]
+            keys[ar._pnl_key("standard_pinn", tc)] = cell["standard"]
+        _write_cell(d, s, _misspec_tag(1.0), keys)
+
+    v = ar.confirmatory_cell(d, tc=0.01, n_boot=200, seed=3)
+    assert v["verdict"] == "null"
+    assert v["n_seeds"] == 3                             # STRUCTURED, not only in notes
+    assert f"{n_req}" in v["notes"] and "seed" in v["notes"]
+    assert "n_seeds" in ar.VERDICT_COLS
+
+    # the complete 10-seed cell is unaffected
+    full = _confirmatory_dir(tmp_path, shift=1.0, mag=1.0)
+    vf = ar.confirmatory_cell(full, tc=0.01, n_boot=200, seed=3)
+    assert vf["verdict"] == "pass" and vf["n_seeds"] == n_req
+
+
 def test_order_attribution_pass_and_null(tmp_path):
     d_pass = _confirmatory_dir(tmp_path, shift=1.0)
     v = ar.order_attribution(d_pass, tc=0.01, n_boot=400, seed=3)
