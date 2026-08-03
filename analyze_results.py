@@ -328,6 +328,35 @@ def _verdict(threshold_id: str, cell: str, statistic, ci, verdict: str,
             "verdict": verdict, "notes": notes}
 
 
+#: exception types that are how a genuinely MISSING artifact presents itself.
+#: FileNotFoundError is raised by `paired_ci_from_npz` when no cell npz carries
+#: the arms, and by every artifact open. KeyError belongs here ONLY at the one
+#: site where absence really does surface that way — `SobolevPINN.load_arm` on an
+#: arm that is not in pinn_config.yaml (see `_measured_label_error`) — so it is
+#: NOT listed globally: a KeyError from a renamed CSV column is a defect, not an
+#: absence, and must not be laundered into "not evaluated".
+_ABSENCE_EXC: tuple = (FileNotFoundError,)
+
+
+def _failure_verdict(exc: BaseException, tid: str, cell: str) -> dict:
+    """A verdict row for an analysis that could not produce one (audit A4).
+
+    'null' is reserved for ABSENCE — the artifact is not there, nothing was
+    evaluated, a legitimate and non-alarming state (`ood_greek_thresholds` uses
+    the same word for it). Anything else — a renamed column, a shape mismatch, a
+    failed import — is a real defect in a PRESENT artifact, and must not be
+    indistinguishable from absence at a glance: `mechanism_memo` prints every
+    verdict identically as **{verdict}**, so the distinction has to live in the
+    value. Those get verdict='error'.
+    """
+    if isinstance(exc, _ABSENCE_EXC):
+        return _verdict(tid, cell, float("nan"), None, "null",
+                        f"not evaluated: {type(exc).__name__}: {exc}")
+    return _verdict(tid, cell, float("nan"), None, "error",
+                    f"ANALYSIS ERROR (artifact present but unusable): "
+                    f"{type(exc).__name__}: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # 2a. confirmatory pass + order attribution
 # ---------------------------------------------------------------------------
@@ -558,7 +587,11 @@ def dose_response(per_seed_csv, labels_npz, pinn_cfg_path, *,
         y_mean, y_std, n = _finite_mean_std(list(cvars.values()))
         try:
             err, src, sig = _measured_label_error(labels_npz, pinn_cfg_path, arm, label_seed)
-        except Exception as exc:                        # arm cfg / artifact absent
+        except (*_ABSENCE_EXC, KeyError) as exc:
+            # ABSENCE only: the label artifact is missing (FileNotFoundError) or
+            # the arm is not in pinn_config.yaml (load_arm's raw["arms"][arm] ->
+            # KeyError). A corrupt-but-present artifact must NOT degrade to a
+            # reference line — it propagates to the caller's error verdict.
             err, src, sig = float("nan"), f"unavailable ({type(exc).__name__})", float("nan")
         is_ref = (arm == reference_arm) or not math.isfinite(err)
         rows.append({"arm": arm, "label_source": src, "gamma_label_noise_sigma": sig,
@@ -1076,8 +1109,10 @@ def run_analysis(confirmatory_dir, out_dir, *, full_dir=None, greek_agg_csv=None
                  thresholds: dict | None = None) -> dict:
     """Run every verdict on frozen artifacts and write the P13 outputs:
     results/tables/threshold_verdicts.csv, results/tables/dose_response.csv and
-    mechanism_adjudication_memo.md (under out_dir). Missing inputs degrade to a
-    'null'/blank verdict with a note rather than raising.
+    mechanism_adjudication_memo.md (under out_dir). ABSENT inputs degrade to a
+    'null'/blank verdict with a note rather than raising; an artifact that is
+    present but UNUSABLE degrades to a distinct 'error' verdict, never to the
+    'null' that means "not evaluated" (audit A4).
 
     The pre-registered thresholds are resolved ONCE here (hb.contract_thresholds
     over the resolved contract) and threaded into every verdict function — no
@@ -1098,9 +1133,8 @@ def run_analysis(confirmatory_dir, out_dir, *, full_dir=None, greek_agg_csv=None
     def _guard(fn, tid, cell):
         try:
             return fn()
-        except Exception as exc:                        # missing artifact -> null row
-            return _verdict(tid, cell, float("nan"), None, "null",
-                            f"not evaluated: {type(exc).__name__}: {exc}")
+        except Exception as exc:
+            return _failure_verdict(exc, tid, cell)
 
     verdicts.append(_guard(
         lambda: confirmatory_cell(conf_pnl, thresholds=th, level=level,
@@ -1118,8 +1152,7 @@ def run_analysis(confirmatory_dir, out_dir, *, full_dir=None, greek_agg_csv=None
             dose_vd, dose_rows = dose_response(full_ps, labels_npz, pinn_cfg_path,
                                                thresholds=th, n_boot=n_boot, seed=seed)
         except Exception as exc:
-            dose_vd = _verdict("dose_response", "combined m=1.0 tc=0.01", float("nan"),
-                               None, "null", f"not evaluated: {type(exc).__name__}: {exc}")
+            dose_vd = _failure_verdict(exc, "dose_response", "combined m=1.0 tc=0.01")
     else:
         dose_vd = _verdict("dose_response", "combined m=1.0 tc=0.01", float("nan"),
                            None, "null", "not evaluated: full-sweep CSV / labels absent")
@@ -1153,9 +1186,8 @@ def run_analysis(confirmatory_dir, out_dir, *, full_dir=None, greek_agg_csv=None
             gold_vd, gold_rows = goldilocks_bates(full_pnl, full_ps, thresholds=th,
                                                   level=level, n_boot=n_boot, seed=seed)
         except Exception as exc:
-            gold_vd = _verdict("goldilocks_bates", "bates severity sweep tc=0.01",
-                               float("nan"), None, "null",
-                               f"not evaluated: {type(exc).__name__}: {exc}")
+            gold_vd = _failure_verdict(exc, "goldilocks_bates",
+                                       "bates severity sweep tc=0.01")
     else:
         gold_vd = _verdict("goldilocks_bates", "bates severity sweep tc=0.01",
                            float("nan"), None, "null",

@@ -614,6 +614,50 @@ def test_run_analysis_writes_outputs_and_degrades(tmp_path):
     assert "COST parameter" in memo
 
 
+def test_corrupt_artifact_is_an_error_verdict_not_a_null(tmp_path):
+    """A4: 'null' means NOT EVALUATED (the artifact is absent) — a non-alarming
+    outcome. A present-but-broken artifact must not borrow that word: the memo
+    prints every verdict identically, so the distinction has to live in the value.
+
+    Here the npz is syntactically valid and both arms are present at the right
+    tc; only the PnL arrays have mismatched shapes, which trips the engine's
+    paired-bootstrap CRN assertion."""
+    conf = tmp_path / "confirmatory"
+    pnl = conf / ar.PNL_DIR
+    rng = np.random.default_rng(11)
+    for s in range(10):
+        a = -np.abs(rng.normal(0, 2, 900))
+        b = -np.abs(rng.normal(0, 2, 880))               # NOT the same CRN paths
+        keys = {}
+        for tc in (0.0, 0.01, 0.02):
+            keys[ar._pnl_key("rung3", tc)] = a
+            keys[ar._pnl_key("rung2", tc)] = a
+            keys[ar._pnl_key("rung1", tc)] = a
+            keys[ar._pnl_key("standard_pinn", tc)] = b
+        _write_cell(pnl, s, _misspec_tag(1.0), keys)
+
+    res = ar.run_analysis(conf, tmp_path / "out", n_boot=50, seed=1)
+    byid = {v["threshold_id"]: v for v in res["verdicts"]}
+    conf_v = byid["confirmatory_cell"]
+    assert conf_v["verdict"] != "null", (
+        "a corrupt artifact rendered as the same 'null' used for absence")
+    assert conf_v["verdict"] == "error"
+    assert "AssertionError" in conf_v["notes"]
+
+    # absence is UNCHANGED: an empty PnL dir is still 'null'
+    empty = tmp_path / "empty"
+    (empty / ar.PNL_DIR).mkdir(parents=True)
+    res2 = ar.run_analysis(empty, tmp_path / "out2", n_boot=50, seed=1)
+    byid2 = {v["threshold_id"]: v for v in res2["verdicts"]}
+    assert byid2["confirmatory_cell"]["verdict"] == "null"
+    assert byid2["goldilocks_bates"]["verdict"] == "null"
+
+    # and the two are distinguishable in the persisted CSV, not only in memory
+    with open(res["paths"]["threshold_verdicts"]) as fh:
+        rows = list(csv.DictReader(fh))
+    assert any(r["verdict"] == "error" for r in rows)
+
+
 def test_run_analysis_verdicts_csv_schema(tmp_path):
     conf = tmp_path / "confirmatory"
     (conf / ar.PNL_DIR).mkdir(parents=True)              # empty -> everything null

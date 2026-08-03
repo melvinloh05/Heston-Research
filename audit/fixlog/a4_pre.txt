@@ -1,0 +1,40 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________ test_corrupt_artifact_is_an_error_verdict_not_a_null _____________
+
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-28/test_corrupt_artifact_is_an_er0')
+
+    def test_corrupt_artifact_is_an_error_verdict_not_a_null(tmp_path):
+        """A4: 'null' means NOT EVALUATED (the artifact is absent) — a non-alarming
+        outcome. A present-but-broken artifact must not borrow that word: the memo
+        prints every verdict identically, so the distinction has to live in the value.
+    
+        Here the npz is syntactically valid and both arms are present at the right
+        tc; only the PnL arrays have mismatched shapes, which trips the engine's
+        paired-bootstrap CRN assertion."""
+        conf = tmp_path / "confirmatory"
+        pnl = conf / ar.PNL_DIR
+        rng = np.random.default_rng(11)
+        for s in range(10):
+            a = -np.abs(rng.normal(0, 2, 900))
+            b = -np.abs(rng.normal(0, 2, 880))               # NOT the same CRN paths
+            keys = {}
+            for tc in (0.0, 0.01, 0.02):
+                keys[ar._pnl_key("rung3", tc)] = a
+                keys[ar._pnl_key("rung2", tc)] = a
+                keys[ar._pnl_key("rung1", tc)] = a
+                keys[ar._pnl_key("standard_pinn", tc)] = b
+            _write_cell(pnl, s, _misspec_tag(1.0), keys)
+    
+        res = ar.run_analysis(conf, tmp_path / "out", n_boot=50, seed=1)
+        byid = {v["threshold_id"]: v for v in res["verdicts"]}
+        conf_v = byid["confirmatory_cell"]
+>       assert conf_v["verdict"] != "null", (
+            "a corrupt artifact rendered as the same 'null' used for absence")
+E       AssertionError: a corrupt artifact rendered as the same 'null' used for absence
+E       assert 'null' != 'null'
+
+test_analyze_results.py:642: AssertionError
+=========================== short test summary info ============================
+FAILED test_analyze_results.py::test_corrupt_artifact_is_an_error_verdict_not_a_null
+1 failed, 20 deselected in 0.24s
