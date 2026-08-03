@@ -46,14 +46,15 @@ PER_SEED_CSV = f"{_OUT_NAME}_per_seed.csv"
 AGG_CSV = f"{_OUT_NAME}_agg.csv"
 PNL_DIR = f"pnl_{_OUT_NAME}"                             # per-cell PnL npz directory
 
-# confirmatory cell = combined perturbation at magnitude 1.0 (misspec) / 0.0 (in-model)
+# confirmatory cell = combined perturbation at magnitude 1.0 (misspec) / 0.0 (in-model);
+# the cell SELECTOR, locked to the contract's confirmatory_cell by
+# test_contract_thresholds.test_analyze_results_confirmatory_cell_filter_is_the_contract_cell
 _MISSPEC_FILTER = {"sweep": "perturbation", "direction": "combined", "magnitude": 1.0}
 _INMODEL_FILTER = {"sweep": "perturbation", "direction": "combined", "magnitude": 0.0}
 
-DEFAULT_LEVEL = 0.95
-DEFAULT_BOOT = 2000
-DEFAULT_SEED = 42                                        # contract meta.global_seed
 _STREAM_POOLED = 7                                       # pooled-bootstrap rng stream
+_DIR = Path(__file__).resolve().parent
+_TH_CACHE: dict = {}
 
 # dose-response ladder (engine names == pinn_config arm names for these)
 DOSE_ARMS = ("sigma_000", "sigma_010", "sigma_025", "sigma_050",
@@ -64,6 +65,30 @@ VERDICT_COLS = ["threshold_id", "cell", "statistic", "ci_lo", "ci_hi",
                 "verdict", "notes"]
 DOSE_COLS = ["arm", "label_source", "gamma_label_noise_sigma", "label_error",
              "cvar_mean", "cvar_seed_std", "n_seeds", "isotonic_fit", "is_reference"]
+
+
+# ---------------------------------------------------------------------------
+# contract thresholds (audit A1/C1: this module used to own 11 re-typed literals)
+# ---------------------------------------------------------------------------
+
+def _default_thresholds(contract_path=None, engine_path=None) -> dict:
+    """The contract's pre-registered numerics (hb.contract_thresholds), cached.
+
+    Every verdict function takes its thresholds as ARGUMENTS; when the caller
+    supplies none it falls back to this — the contract — never to a module-level
+    literal. Paths default to the copies next to this module so the fallback does
+    not depend on the working directory.
+    """
+    key = (str(contract_path or _DIR / "heston_benchmark_v6.yaml"),
+           str(engine_path or _DIR / "hedging_config.yaml"))
+    if key not in _TH_CACHE:
+        _TH_CACHE[key] = hb.contract_thresholds(hb.resolve_config(*key))
+    return dict(_TH_CACHE[key])
+
+
+def _pick(value, th: dict, key: str):
+    """`value` when the caller supplied one, else the contract's `key`."""
+    return th[key] if value is None else value
 
 
 # ---------------------------------------------------------------------------
@@ -240,8 +265,9 @@ def _pooled_stratified(blocks, level: float, n_boot: int, seed: int) -> dict:
 
 
 def paired_ci_from_npz(cell_dir, arm_a: str, arm_b: str, tc,
-                       level: float = DEFAULT_LEVEL, n_boot: int = DEFAULT_BOOT,
-                       seed: int = DEFAULT_SEED, *, slug_filter=None) -> dict:
+                       level: float | None = None, n_boot: int | None = None,
+                       seed: int | None = None, *, slug_filter=None,
+                       thresholds: dict | None = None) -> dict:
     """Paired CVaR-difference of two arms on the SAME CRN paths, from persisted PnL.
 
     Loads arm_a/arm_b per-path PnL per seed block (one npz per (cell, seed)) and
@@ -258,8 +284,13 @@ def paired_ci_from_npz(cell_dir, arm_a: str, arm_b: str, tc,
 
     `slug_filter` selects the cell among many npz in one directory (dict of
     slug-field -> value, or a callable on the parsed slug). Raises if no cell
-    npz carries both arms at `tc`.
+    npz carries both arms at `tc`. level/n_boot/seed default to the contract
+    (cvar_convention.level, risk.bootstrap_B, meta.global_seed).
     """
+    th = _default_thresholds() if thresholds is None else thresholds
+    level = _pick(level, th, "cvar_level")
+    n_boot = _pick(n_boot, th, "n_boot")
+    seed = _pick(seed, th, "global_seed")
     blocks = _gather_cell_arrays(cell_dir, arm_a, arm_b, tc, slug_filter)
     if not blocks:
         raise FileNotFoundError(
@@ -298,15 +329,23 @@ def _verdict(threshold_id: str, cell: str, statistic, ci, verdict: str,
 # 2a. confirmatory pass + order attribution
 # ---------------------------------------------------------------------------
 
-def confirmatory_cell(pnl_dir, *, tc: float = 0.01, level: float = DEFAULT_LEVEL,
-                      n_boot: int = DEFAULT_BOOT, seed: int = DEFAULT_SEED,
-                      arm: str = "rung3", baseline: str = "standard_pinn",
-                      rel_threshold: float = 0.10) -> dict:
+def confirmatory_cell(pnl_dir, *, thresholds: dict | None = None,
+                      tc: float | None = None, level: float | None = None,
+                      n_boot: int | None = None, seed: int | None = None,
+                      arm: str = "rung3", baseline: str | None = None,
+                      rel_threshold: float | None = None) -> dict:
     """Confirmatory pass: rung3 vs standard_pinn at (combined, m=1.0, tc=1%), 10
     seeds. PASS iff pooled-stratified rel improvement >= rel_threshold AND the
-    pooled CI on the CVaR difference excludes 0 (on the improvement side)."""
+    pooled CI on the CVaR difference excludes 0 (on the improvement side).
+
+    Every threshold defaults to the CONTRACT (`thresholds` / _default_thresholds),
+    never to a module literal."""
+    th = _default_thresholds() if thresholds is None else thresholds
+    tc = _pick(tc, th, "confirmatory_tc")
+    baseline = _pick(baseline, th, "baseline_arm")
+    rel_threshold = _pick(rel_threshold, th, "confirmatory_rel_threshold")
     res = paired_ci_from_npz(pnl_dir, arm, baseline, tc, level, n_boot, seed,
-                             slug_filter=_MISSPEC_FILTER)
+                             slug_filter=_MISSPEC_FILTER, thresholds=th)
     p = res["pooled"]
     rel = p["rel_improvement"]
     ok_ci = _excludes_zero(p["ci_lo"], p["ci_hi"]) and p["ci_hi"] < 0.0
@@ -323,14 +362,17 @@ def confirmatory_cell(pnl_dir, *, tc: float = 0.01, level: float = DEFAULT_LEVEL
                     (p["ci_lo"], p["ci_hi"]), verdict, notes)
 
 
-def order_attribution(pnl_dir, *, tc: float = 0.01, level: float = DEFAULT_LEVEL,
-                      n_boot: int = DEFAULT_BOOT, seed: int = DEFAULT_SEED,
+def order_attribution(pnl_dir, *, thresholds: dict | None = None,
+                      tc: float | None = None, level: float | None = None,
+                      n_boot: int | None = None, seed: int | None = None,
                       arm: str = "rung2", baseline: str = "rung1") -> dict:
     """Order attribution: rung2 beats rung1 at the confirmatory cell, pooled CI
     excludes 0. The causal claim lives on this rung1->rung2 (add-Gamma) gap.
     fail => honest null (no evidence Gamma supervision helped over Delta-only)."""
+    th = _default_thresholds() if thresholds is None else thresholds
+    tc = _pick(tc, th, "confirmatory_tc")
     res = paired_ci_from_npz(pnl_dir, arm, baseline, tc, level, n_boot, seed,
-                             slug_filter=_MISSPEC_FILTER)
+                             slug_filter=_MISSPEC_FILTER, thresholds=th)
     p = res["pooled"]
     beats = _excludes_zero(p["ci_lo"], p["ci_hi"]) and p["ci_hi"] < 0.0
     verdict = "pass" if beats else "fail"
@@ -349,7 +391,7 @@ def order_attribution(pnl_dir, *, tc: float = 0.01, level: float = DEFAULT_LEVEL
 # ---------------------------------------------------------------------------
 
 def _measured_label_error(labels_npz, pinn_cfg_path, arm: str,
-                          label_seed: int = DEFAULT_SEED) -> tuple:
+                          label_seed: int) -> tuple:
     """(||gamma_label - gamma_ref|| / ||gamma_ref||, label_source, sigma) for one arm.
 
     Reads the arm's PINNConfig (SobolevPINN.load_arm) and its batch from the frozen
@@ -443,11 +485,12 @@ def _spearman_seed_bootstrap(xs, y_by_seed, seeds, n_boot: int, seed: int):
 
 
 def dose_response(per_seed_csv, labels_npz, pinn_cfg_path, *,
-                  dose_arms=DOSE_ARMS, direction: str = "combined",
-                  magnitude: float = 1.0, tc: float = 0.01,
-                  reference_arm: str = _GRADPEN, label_seed: int = DEFAULT_SEED,
-                  n_boot: int = DEFAULT_BOOT, seed: int = DEFAULT_SEED,
-                  spearman_p_max: float = 0.05):
+                  thresholds: dict | None = None,
+                  dose_arms=DOSE_ARMS, direction: str | None = None,
+                  magnitude: float | None = None, tc: float | None = None,
+                  reference_arm: str = _GRADPEN, label_seed: int | None = None,
+                  n_boot: int | None = None, seed: int | None = None,
+                  spearman_p_max: float | None = None):
     """Gamma-label-noise dose-response at the confirmatory cell.
 
     x  = MEASURED gamma-label error per arm, ||gamma_label - gamma_ref|| /
@@ -463,7 +506,18 @@ def dose_response(per_seed_csv, labels_npz, pinn_cfg_path, *,
     gap is reported ('cheap labels suffice' reading).
 
     Returns (verdict_dict, rows) where rows are the per-arm DOSE_COLS records.
+    The cell coordinates and `spearman_p_max` default to the CONTRACT
+    (confirmatory_cell + acceptance_thresholds.dose_response.bootstrap_tail_prob_max;
+    the latter is a one-sided BOOTSTRAP TAIL PROBABILITY, not a classical p-value).
     """
+    th = _default_thresholds() if thresholds is None else thresholds
+    direction = _pick(direction, th, "confirmatory_direction")
+    magnitude = _pick(magnitude, th, "confirmatory_magnitude")
+    tc = _pick(tc, th, "confirmatory_tc")
+    label_seed = _pick(label_seed, th, "global_seed")
+    seed = _pick(seed, th, "global_seed")
+    n_boot = _pick(n_boot, th, "n_boot")
+    spearman_p_max = _pick(spearman_p_max, th, "dose_bootstrap_tail_prob_max")
     csv_rows = read_csv(per_seed_csv)
 
     def _cell(arm):
@@ -551,9 +605,12 @@ def dose_response(per_seed_csv, labels_npz, pinn_cfg_path, *,
 # 2c. OOD Greek thresholds (join P11)
 # ---------------------------------------------------------------------------
 
-def ood_greek_thresholds(greek_agg_csv, *, regimes=("near_feller", "strong_neg_corr"),
-                         arm: str = "rung3", red_threshold: float = 0.15,
-                         parity_tol: float = 0.10, binding: bool = True) -> dict:
+def ood_greek_thresholds(greek_agg_csv, *, thresholds: dict | None = None,
+                         regimes=None, arm: str = "rung3",
+                         gamma_red_threshold: float | None = None,
+                         vega_red_threshold: float | None = None,
+                         parity_tol: float | None = None,
+                         binding: bool = True) -> dict:
     """OOD Greek pass: Gamma & Vega RMSE reduction vs standard_pinn >= 0.15 at
     price parity within 0.10, on near_feller and strong_neg_corr (full grid,
     seed mean). Joins P11's ood_param_greeks_agg.csv; CI is the seed-std normal
@@ -563,7 +620,16 @@ def ood_greek_thresholds(greek_agg_csv, *, regimes=("near_feller", "strong_neg_c
     binding=False emits the SAME thresholds and CI machinery for a SECONDARY arm
     (e.g. rung2, the causal rung of the rung1->rung2 order claim) under a distinct
     threshold_id and a SECONDARY / non-binding note — the frozen contract binds
-    rung3 only, so this row is informational and gates nothing."""
+    rung3 only, so this row is informational and gates nothing.
+
+    Regimes and all three thresholds default to the CONTRACT
+    (splits.heldout_greek_and_hedging, acceptance_thresholds.{ood_gamma,ood_vega}
+    _rmse_reduction_min, acceptance_thresholds.price_parity_within)."""
+    th = _default_thresholds() if thresholds is None else thresholds
+    regimes = _pick(regimes, th, "ood_regimes")
+    gamma_red_threshold = _pick(gamma_red_threshold, th, "ood_gamma_reduction_min")
+    vega_red_threshold = _pick(vega_red_threshold, th, "ood_vega_reduction_min")
+    parity_tol = _pick(parity_tol, th, "price_parity_within")
     rows = read_csv(greek_agg_csv)
     lut = {(r.get("regime"), r.get("arm"), r.get("greek")): r
            for r in rows if r.get("slice") == "full"}
@@ -581,8 +647,8 @@ def ood_greek_thresholds(greek_agg_csv, *, regimes=("near_feller", "strong_neg_c
         v_red = _num(vr.get("reduction_vs_standard_pinn_mean"))
         pp = _num(gr.get("price_parity_mean"))
         n = _num(gr.get("n_seeds")) or 0
-        g_ok = g_red is not None and g_red >= red_threshold
-        v_ok = v_red is not None and v_red >= red_threshold
+        g_ok = g_red is not None and g_red >= gamma_red_threshold
+        v_ok = v_red is not None and v_red >= vega_red_threshold
         p_ok = pp is not None and abs(pp) <= parity_tol
         ok = bool(g_ok and v_ok and p_ok)
         if binding_red is None or not math.isfinite(binding_red) or (
@@ -616,15 +682,23 @@ def ood_greek_thresholds(greek_agg_csv, *, regimes=("near_feller", "strong_neg_c
 # 2d. Sakuma-null consistency (in-model x tc=0; NOT pass/fail)
 # ---------------------------------------------------------------------------
 
-def sakuma_null_consistency(pnl_dir, *, tc: float = 0.0, level: float = DEFAULT_LEVEL,
-                            n_boot: int = DEFAULT_BOOT, seed: int = DEFAULT_SEED,
-                            arm: str = "rung3", baseline: str = "standard_pinn",
-                            rel_tol: float = 0.02) -> dict:
+def sakuma_null_consistency(pnl_dir, *, thresholds: dict | None = None,
+                            tc: float | None = None, level: float | None = None,
+                            n_boot: int | None = None, seed: int | None = None,
+                            arm: str = "rung3", baseline: str | None = None,
+                            rel_tol: float | None = None) -> dict:
     """In-model (m=0), tc=0 rung3-vs-standard gap. CONSISTENCY CHECK, not pass/fail:
     'consistent' iff the pooled CI covers 0 OR |rel| < rel_tol (both readings of a
-    negligible in-model gap, reproducing the Sakuma null); else 'flag'."""
+    negligible in-model gap, reproducing the Sakuma null); else 'flag'.
+
+    tc and rel_tol default to the CONTRACT (the zero TC tier and
+    acceptance_thresholds.sakuma_null_rel_tol)."""
+    th = _default_thresholds() if thresholds is None else thresholds
+    tc = th["tc_tiers"][0] if tc is None else tc
+    baseline = _pick(baseline, th, "baseline_arm")
+    rel_tol = _pick(rel_tol, th, "sakuma_null_rel_tol")
     res = paired_ci_from_npz(pnl_dir, arm, baseline, tc, level, n_boot, seed,
-                             slug_filter=_INMODEL_FILTER)
+                             slug_filter=_INMODEL_FILTER, thresholds=th)
     p = res["pooled"]
     rel = p["rel_improvement"]
     consistent = _covers_zero(p["ci_lo"], p["ci_hi"]) or (
@@ -686,7 +760,7 @@ def _slope(tcs, diffs) -> float:
     return float(np.polyfit(x[m], y[m], 1)[0])
 
 
-def _t_ex_diff(per_seed_csv, *, direction="combined", magnitude=1.0, tc=0.01,
+def _t_ex_diff(per_seed_csv, *, direction, magnitude, tc,
                arm="rung3", baseline="standard_pinn") -> dict:
     """Seed-paired t_ex(arm) - t_ex(baseline) at a cell, with a seed-std CI.
 
@@ -715,17 +789,23 @@ def _t_ex_diff(per_seed_csv, *, direction="combined", magnitude=1.0, tc=0.01,
             "per_seed": {s: a[s] - b[s] for s in seeds}}
 
 
-def mechanism_adjudication(pnl_dir, per_seed_csv, *, tcs=(0.0, 0.01, 0.02),
-                           level: float = DEFAULT_LEVEL, n_boot: int = DEFAULT_BOOT,
-                           seed: int = DEFAULT_SEED, arm: str = "rung3",
-                           baseline: str = "standard_pinn") -> dict:
+def mechanism_adjudication(pnl_dir, per_seed_csv, *, thresholds: dict | None = None,
+                           tcs=None, level: float | None = None,
+                           n_boot: int | None = None, seed: int | None = None,
+                           arm: str = "rung3", baseline: str | None = None) -> dict:
     """Assemble the mechanism adjudication (NOT a choice beyond the pre-registered
     readings): rung3-standard gap over the TC sweep at misspec m=1.0 AND in-model
     m=0.0, the T_ex(rung3)-T_ex(std) excess-turnover diff, d(gap)/d(tc), the 2x2
-    {in-model, misspec} x {tc=0, tc>0} gap view, and the _mechanism_reading."""
+    {in-model, misspec} x {tc=0, tc>0} gap view, and the _mechanism_reading.
+
+    The TC sweep defaults to the CONTRACT's transaction_costs.tiers."""
+    th = _default_thresholds() if thresholds is None else thresholds
+    tcs = tuple(_pick(tcs, th, "tc_tiers"))
+    baseline = _pick(baseline, th, "baseline_arm")
+
     def _gap(slug_filter, tc):
         p = paired_ci_from_npz(pnl_dir, arm, baseline, tc, level, n_boot, seed,
-                               slug_filter=slug_filter)["pooled"]
+                               slug_filter=slug_filter, thresholds=th)["pooled"]
         return {"tc": float(tc), "diff": p["diff"], "rel": p["rel_improvement"],
                 "ci_lo": p["ci_lo"], "ci_hi": p["ci_hi"]}
 
@@ -734,7 +814,9 @@ def mechanism_adjudication(pnl_dir, per_seed_csv, *, tcs=(0.0, 0.01, 0.02),
         inmodel = [_gap(_INMODEL_FILTER, tc) for tc in tcs]
     except FileNotFoundError:
         inmodel = []
-    t_ex = _t_ex_diff(per_seed_csv, tc=tcs[1] if len(tcs) > 1 else tcs[0],
+    t_ex = _t_ex_diff(per_seed_csv, direction=th["confirmatory_direction"],
+                      magnitude=th["confirmatory_magnitude"],
+                      tc=tcs[1] if len(tcs) > 1 else tcs[0],
                       arm=arm, baseline=baseline)
     reading = _mechanism_reading(misspec, t_ex)
     slope = _slope([g["tc"] for g in misspec], [g["diff"] for g in misspec])
@@ -768,14 +850,17 @@ def mechanism_adjudication(pnl_dir, per_seed_csv, *, tcs=(0.0, 0.01, 0.02),
 # 2f. Goldilocks (Bates severity sweep)
 # ---------------------------------------------------------------------------
 
-def goldilocks_bates(pnl_dir, per_seed_csv, *, tc: float = 0.01,
-                     level: float = DEFAULT_LEVEL, n_boot: int = DEFAULT_BOOT,
-                     seed: int = DEFAULT_SEED, arm: str = "rung3",
-                     baseline: str = "standard_pinn"):
+def goldilocks_bates(pnl_dir, per_seed_csv, *, thresholds: dict | None = None,
+                     tc: float | None = None, level: float | None = None,
+                     n_boot: int | None = None, seed: int | None = None,
+                     arm: str = "rung3", baseline: str | None = None):
     """Per Bates (lambda_j, sigma_j) severity row: pooled rung3-standard gap + CI.
     Gap visibility is NON-MONOTONE in severity by pre-registration (goldilocks) —
     the sweep LOCATES the decision-relevant regime (CI excludes 0). 'nowhere
     decisive' is the pre-registered null, NOT a failure. Returns (verdict, rows)."""
+    th = _default_thresholds() if thresholds is None else thresholds
+    tc = _pick(tc, th, "confirmatory_tc")
+    baseline = _pick(baseline, th, "baseline_arm")
     csv_rows = read_csv(per_seed_csv)
     combos = sorted({(r.get("lambda_j"), r.get("sigma_j")) for r in csv_rows
                      if str(r.get("sweep")) == "bates"
@@ -786,7 +871,7 @@ def goldilocks_bates(pnl_dir, per_seed_csv, *, tc: float = 0.01,
         filt = {"sweep": "bates", "lambda_j": lam, "sigma_j": sj}
         try:
             p = paired_ci_from_npz(pnl_dir, arm, baseline, tc, level, n_boot, seed,
-                                   slug_filter=filt)["pooled"]
+                                   slug_filter=filt, thresholds=th)["pooled"]
         except FileNotFoundError:
             continue
         decisive = _excludes_zero(p["ci_lo"], p["ci_hi"]) and p["ci_hi"] < 0.0
@@ -958,12 +1043,19 @@ def mechanism_memo(mech: dict, verdicts: list[dict], goldilocks_rows: list[dict]
 
 def run_analysis(confirmatory_dir, out_dir, *, full_dir=None, greek_agg_csv=None,
                  labels_npz=None, pinn_cfg_path="pinn_config.yaml",
-                 level: float = DEFAULT_LEVEL, n_boot: int = DEFAULT_BOOT,
-                 seed: int = DEFAULT_SEED) -> dict:
+                 level: float | None = None, n_boot: int | None = None,
+                 seed: int | None = None, contract_path=None, engine_path=None,
+                 thresholds: dict | None = None) -> dict:
     """Run every verdict on frozen artifacts and write the P13 outputs:
     results/tables/threshold_verdicts.csv, results/tables/dose_response.csv and
     mechanism_adjudication_memo.md (under out_dir). Missing inputs degrade to a
-    'null'/blank verdict with a note rather than raising."""
+    'null'/blank verdict with a note rather than raising.
+
+    The pre-registered thresholds are resolved ONCE here (hb.contract_thresholds
+    over the resolved contract) and threaded into every verdict function — no
+    verdict in this module reads a Python literal (audit A1/C1)."""
+    th = (_default_thresholds(contract_path, engine_path) if thresholds is None
+          else thresholds)
     conf = Path(confirmatory_dir)
     conf_pnl = conf / PNL_DIR
     conf_ps = conf / PER_SEED_CSV
@@ -983,10 +1075,12 @@ def run_analysis(confirmatory_dir, out_dir, *, full_dir=None, greek_agg_csv=None
                             f"not evaluated: {type(exc).__name__}: {exc}")
 
     verdicts.append(_guard(
-        lambda: confirmatory_cell(conf_pnl, level=level, n_boot=n_boot, seed=seed),
+        lambda: confirmatory_cell(conf_pnl, thresholds=th, level=level,
+                                  n_boot=n_boot, seed=seed),
         "confirmatory_cell", "combined m=1.0 tc=0.01"))
     verdicts.append(_guard(
-        lambda: order_attribution(conf_pnl, level=level, n_boot=n_boot, seed=seed),
+        lambda: order_attribution(conf_pnl, thresholds=th, level=level,
+                                  n_boot=n_boot, seed=seed),
         "order_attribution", "rung2-vs-rung1 combined m=1.0 tc=0.01"))
 
     dose_vd = None
@@ -994,7 +1088,7 @@ def run_analysis(confirmatory_dir, out_dir, *, full_dir=None, greek_agg_csv=None
     if full_ps and labels_npz:
         try:
             dose_vd, dose_rows = dose_response(full_ps, labels_npz, pinn_cfg_path,
-                                               n_boot=n_boot, seed=seed)
+                                               thresholds=th, n_boot=n_boot, seed=seed)
         except Exception as exc:
             dose_vd = _verdict("dose_response", "combined m=1.0 tc=0.01", float("nan"),
                                None, "null", f"not evaluated: {type(exc).__name__}: {exc}")
@@ -1004,20 +1098,22 @@ def run_analysis(confirmatory_dir, out_dir, *, full_dir=None, greek_agg_csv=None
     verdicts.append(dose_vd)
 
     verdicts.append(_guard(
-        lambda: ood_greek_thresholds(greek_agg_csv),
+        lambda: ood_greek_thresholds(greek_agg_csv, thresholds=th),
         "ood_greek_thresholds", "rung3 near_feller/strong_neg_corr"))
     # SECONDARY (non-binding): the causal rung of the rung1->rung2 order claim,
     # same thresholds/CI as rung3; informational only — gates nothing.
     verdicts.append(_guard(
-        lambda: ood_greek_thresholds(greek_agg_csv, arm="rung2", binding=False),
+        lambda: ood_greek_thresholds(greek_agg_csv, thresholds=th, arm="rung2",
+                                     binding=False),
         "ood_greek_thresholds_rung2_secondary",
         "rung2 near_feller/strong_neg_corr (SECONDARY)"))
     verdicts.append(_guard(
-        lambda: sakuma_null_consistency(conf_pnl, level=level, n_boot=n_boot, seed=seed),
+        lambda: sakuma_null_consistency(conf_pnl, thresholds=th, level=level,
+                                        n_boot=n_boot, seed=seed),
         "sakuma_null_consistency", "combined m=0.0 tc=0.0"))
 
     mech = _guard(
-        lambda: mechanism_adjudication(conf_pnl, conf_ps, level=level,
+        lambda: mechanism_adjudication(conf_pnl, conf_ps, thresholds=th, level=level,
                                        n_boot=n_boot, seed=seed),
         "mechanism_adjudication", "combined m=1.0 TC-sweep")
     verdicts.append({k: mech[k] for k in VERDICT_COLS})
@@ -1026,8 +1122,8 @@ def run_analysis(confirmatory_dir, out_dir, *, full_dir=None, greek_agg_csv=None
     gold_rows: list[dict] = []
     if full_pnl and full_ps:
         try:
-            gold_vd, gold_rows = goldilocks_bates(full_pnl, full_ps, level=level,
-                                                  n_boot=n_boot, seed=seed)
+            gold_vd, gold_rows = goldilocks_bates(full_pnl, full_ps, thresholds=th,
+                                                  level=level, n_boot=n_boot, seed=seed)
         except Exception as exc:
             gold_vd = _verdict("goldilocks_bates", "bates severity sweep tc=0.01",
                                float("nan"), None, "null",
@@ -1065,12 +1161,19 @@ def main(argv: list[str] | None = None) -> dict:
     ap.add_argument("--labels-npz", default=None, help="frozen label artifact labels.npz")
     ap.add_argument("--pinn-cfg", default="pinn_config.yaml")
     ap.add_argument("--out-dir", required=True)
-    ap.add_argument("--n-boot", type=int, default=DEFAULT_BOOT)
-    ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    ap.add_argument("--contract", default=None,
+                    help="benchmark contract (default: heston_benchmark_v6.yaml beside this module)")
+    ap.add_argument("--engine", default=None,
+                    help="engine supplement (default: hedging_config.yaml beside this module)")
+    ap.add_argument("--n-boot", type=int, default=None,
+                    help="override the contract's risk.bootstrap_B")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="override the contract's meta.global_seed")
     args = ap.parse_args(argv)
     res = run_analysis(args.confirmatory_dir, args.out_dir, full_dir=args.full_dir,
                        greek_agg_csv=args.greek_agg_csv, labels_npz=args.labels_npz,
-                       pinn_cfg_path=args.pinn_cfg, n_boot=args.n_boot, seed=args.seed)
+                       pinn_cfg_path=args.pinn_cfg, n_boot=args.n_boot, seed=args.seed,
+                       contract_path=args.contract, engine_path=args.engine)
     for v in res["verdicts"]:
         print(f"{v['threshold_id']:>24s}: {v['verdict']}")
     for k, p in res["paths"].items():

@@ -38,6 +38,7 @@ import numpy as np
 import torch
 import yaml
 
+from Hedging_backtest import contract_thresholds
 from pinn_provider import build_providers
 from train_pinn import HESTON_PARAM_NAMES
 
@@ -271,8 +272,16 @@ def _agg_rows(perseed_rows) -> list:
     return agg
 
 
-def _threshold_rows(agg_rows, primary_regimes, arms) -> list:
-    """OOD Greek pre-check (Gamma & Vega reduction >= 0.15 at price parity within 0.10)."""
+def _threshold_rows(agg_rows, primary_regimes, arms, thresholds: dict) -> list:
+    """OOD Greek pre-check at the CONTRACT's thresholds (audit C1/A1).
+
+    `thresholds` is a Hedging_backtest.contract_thresholds dict: Gamma & Vega RMSE
+    reduction >= acceptance_thresholds.ood_{gamma,vega}_rmse_reduction_min at price
+    parity within acceptance_thresholds.price_parity_within. No literals here.
+    """
+    g_min = float(thresholds["ood_gamma_reduction_min"])
+    v_min = float(thresholds["ood_vega_reduction_min"])
+    p_tol = float(thresholds["price_parity_within"])
     check_arms = [a for a in ("rung3", "rung2") if a in arms]
     lut = {(r["regime"], r["arm"], r["greek"]): r for r in agg_rows if r["slice"] == "full"}
     rows = []
@@ -285,19 +294,23 @@ def _threshold_rows(agg_rows, primary_regimes, arms) -> list:
             g_red, g_std = gr["reduction_vs_standard_pinn_mean"], gr["reduction_vs_standard_pinn_std"]
             v_red, v_std = vr["reduction_vs_standard_pinn_mean"], vr["reduction_vs_standard_pinn_std"]
             pp, pp_std = gr["price_parity_mean"], gr["price_parity_std"]
-            g_ok, v_ok = g_red >= 0.15, v_red >= 0.15
-            p_ok = math.isfinite(pp) and abs(pp) <= 0.10
+            g_ok, v_ok = g_red >= g_min, v_red >= v_min
+            p_ok = math.isfinite(pp) and abs(pp) <= p_tol
             rows.append({"regime": regime, "arm": arm,
                          "gamma_reduction_mean": g_red, "gamma_reduction_std": g_std,
                          "vega_reduction_mean": v_red, "vega_reduction_std": v_std,
                          "price_parity_mean": pp, "price_parity_std": pp_std,
+                         # NOTE: these three column NAMES carry the contract's
+                         # current numbers; the values they hold are computed from
+                         # `thresholds` (see audit/FINDINGS_ADDENDUM.md).
                          "gamma_ge_0.15": bool(g_ok), "vega_ge_0.15": bool(v_ok),
                          "price_parity_within_0.10": bool(p_ok),
                          "pass": bool(g_ok and v_ok and p_ok)})
     return rows
 
 
-def run_greek_eval(cfg, ckpt_root, arms, seeds, anchors_dir, out_dir) -> dict:
+def run_greek_eval(cfg, ckpt_root, arms, seeds, anchors_dir, out_dir,
+                   thresholds: dict | None = None) -> dict:
     """Score every arm x seed on the anchor grids; write the primary + sanity + comparison
     tables and the threshold pre-check. Returns the written paths and the in-memory rows.
 
@@ -307,9 +320,15 @@ def run_greek_eval(cfg, ckpt_root, arms, seeds, anchors_dir, out_dir) -> dict:
     scored on the full grid plus the wing / tau holdout slices. `arms` are ENGINE names
     (pinn_provider._ARM_DIR maps them to checkpoint dirs). standard_pinn is the comparison
     baseline; include it in `arms` for the comparison columns to be populated.
+
+    `thresholds` is a Hedging_backtest.contract_thresholds dict; it defaults to the
+    one derived from `cfg` itself, so the pre-check thresholds are ALWAYS the
+    contract's (audit C1/A1) and never a literal in this module.
     """
     if isinstance(cfg, (str, Path)):
         cfg = yaml.safe_load(Path(cfg).read_text())
+    if thresholds is None:
+        thresholds = contract_thresholds(cfg)
     r, q = float(cfg["grid"]["r"]), float(cfg["grid"]["q"])
     arms, seeds = list(arms), list(seeds)
     primary = list(cfg["splits"]["heldout_greek_and_hedging"])
@@ -331,7 +350,7 @@ def run_greek_eval(cfg, ckpt_root, arms, seeds, anchors_dir, out_dir) -> dict:
     san_rows = _perseed_rows(san_recs, sanity, sanity_slices, seeds, arms)
     prim_agg = _agg_rows(prim_rows)
     san_agg = _agg_rows(san_rows)
-    thresh = _threshold_rows(prim_agg, primary, arms)
+    thresh = _threshold_rows(prim_agg, primary, arms, thresholds)
 
     paths = {
         "ood_param_greeks": out / "ood_param_greeks.csv",
@@ -348,8 +367,10 @@ def run_greek_eval(cfg, ckpt_root, arms, seeds, anchors_dir, out_dir) -> dict:
 
     print(f"Greek eval: {len(arms)} arms x {len(seeds)} seeds; primary {primary}, "
           f"sanity {sanity}. Wrote {', '.join(p.name for p in paths.values())} to {out}.")
-    print("THRESHOLD PRE-CHECK (informational; verdicts live in P13 — "
-          "Gamma & Vega reduction >= 0.15 at price parity within 0.10):")
+    print("THRESHOLD PRE-CHECK (informational; verdicts live in P13 — Gamma reduction "
+          f">= {thresholds['ood_gamma_reduction_min']} & Vega reduction >= "
+          f"{thresholds['ood_vega_reduction_min']} at price parity within "
+          f"{thresholds['price_parity_within']}):")
     if not thresh:
         print("  (no rung2/rung3 arm present — nothing to pre-check)")
     for t in thresh:

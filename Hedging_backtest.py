@@ -73,6 +73,65 @@ def resolve_config(contract_path: str = "heston_benchmark_v6.yaml",
                         "engine_path": str(engine_path)}}
 
 
+# m = 1.0 IS the contract's perturbation endpoint by construction: the engine's
+# shift_at_m1 is asserted onto the contract targets in _assert_contract_targets, so
+# the confirmatory cell's magnitude is structural, not a tunable threshold.
+_CONFIRMATORY_MAGNITUDE = 1.0
+
+
+def contract_thresholds(cfg: dict) -> dict:
+    """Every pre-registered numeric the verdict / gate / Greek-eval layers act on.
+
+    ONE source of truth (audit C1 / A1 / G1): downstream modules read their
+    thresholds from here instead of re-typing the contract as Python literals, so a
+    human edit to `heston_benchmark_v6.yaml` reaches every verdict.
+
+    `cfg` is a `resolve_config()` output ({'benchmark', 'engine', ...}) OR a bare
+    contract dict (eval_greeks loads only the contract) — the three
+    engine-supplement keys (`n_boot`, `baseline_arm`, `oracle_arm`) are present only
+    in the former case rather than silently defaulted.
+
+    TODO(C1): `confirmatory_rel_threshold` is the one value with NO numeric contract
+    key — `acceptance_thresholds.confirmatory_cell_pass` and
+    `metrics.cvar_convention.threshold_form` state ">=10% relative" in prose only.
+    Requested in audit/contract_requests.md; the literal lives HERE and nowhere else.
+    """
+    bm = cfg.get("benchmark", cfg)
+    eng = cfg.get("engine") or {}
+    meta, at = bm["meta"], bm["acceptance_thresholds"]
+    hs, sp = bm["hedging_simulation"], bm["splits"]
+    cc = hs["confirmatory_cell"]
+    th = {
+        "global_seed": int(meta["global_seed"]),
+        "seeds_min": int(meta["seeds_min"]),
+        "seeds_confirmatory_cell": int(meta["seeds_confirmatory_cell"]),
+        "cvar_level": float(bm["metrics"]["cvar_convention"]["level"]),
+        "tc_tiers": tuple(float(t) for t in hs["transaction_costs"]["tiers"]),
+        "confirmatory_tc": float(cc["tc_tier"]),
+        "confirmatory_direction": str(cc["perturbation"]),
+        "confirmatory_regime": str(cc["regime"]),
+        "confirmatory_magnitude": _CONFIRMATORY_MAGNITUDE,
+        "confirmatory_rel_threshold": 0.10,             # TODO(C1): prose-only in the contract
+        "ood_regimes": tuple(sp["heldout_greek_and_hedging"]),
+        "ood_gamma_reduction_min": float(at["ood_gamma_rmse_reduction_min"]),
+        "ood_vega_reduction_min": float(at["ood_vega_rmse_reduction_min"]),
+        "price_parity_within": float(at["price_parity_within"]),
+        "sakuma_null_rel_tol": float(at["sakuma_null_rel_tol"]),
+        "dose_bootstrap_tail_prob_max":
+            float(at["dose_response"]["bootstrap_tail_prob_max"]),
+        "gate_spread_threshold_rel":
+            float(bm["oracle_headroom_gate"]["spread_threshold_rel"]),
+        "moneyness_wing_bounds":
+            tuple(float(x) for x in sp["moneyness_wing_holdout"]["moneyness_bounds"]),
+        "plateau_tol": float(bm["information_matching"]["plateau_tol"]),
+    }
+    if eng:
+        th.update({"n_boot": int(eng["risk"]["bootstrap_B"]),
+                   "baseline_arm": str(eng["baseline_provider_name"]),
+                   "oracle_arm": str(eng["oracle_provider_name"])})
+    return th
+
+
 def log_resolved_config(cfg: dict, out_dir: str) -> str:
     """Write the fully resolved config next to the run outputs."""
     os.makedirs(out_dir, exist_ok=True)

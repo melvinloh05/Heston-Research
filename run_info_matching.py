@@ -57,8 +57,10 @@ from train_pinn import (ArmDataset, TrainConfig, capacity_control_config, config
                         data_manifest_sha, pde_sampling_spec, saturation_sweep_configs,
                         train_model)
 
-# The plateau tolerance is fixed by this study, not a swept knob — declared once here and
-# echoed into every artifact so the rule is legible from the outputs alone.
+# The plateau tolerance is fixed by this study, not a swept knob. It is DECLARED in the
+# contract (information_matching.plateau_tol) and run_saturation_sweep reads it from there;
+# this constant is only the pure plateau_multiplier helper's default and is locked to the
+# contract by test_contract_thresholds.test_plateau_tol_matches_the_contract (audit C1).
 PLATEAU_TOL = 0.02                                  # < 2% mean-Gamma-RMSE gain => plateau
 SATURATED_ARM = "info_matched_baseline"             # price-only; n_price_points is the sweep axis
 _VAL_GREEKS = ("price", "delta", "gamma", "vega")   # gamma drives the plateau; rest are context
@@ -368,7 +370,7 @@ def run_saturation_sweep(data: str, seeds, out_dir: str, *,
                          contract: str = "heston_benchmark_v6.yaml",
                          device: str = "cpu", steps: int | None = None,
                          multipliers=None, base_n_price_points: int | None = None,
-                         tol: float = PLATEAU_TOL, train_overrides: dict | None = None,
+                         tol: float | None = None, train_overrides: dict | None = None,
                          ckpt_root: str | None = None) -> dict:
     """Run the full A10 saturation sweep + capacity control; write the CSVs, PNG, paragraph,
     AND persist the plateau-m checkpoint the downstream full sweep hedges.
@@ -388,6 +390,8 @@ def run_saturation_sweep(data: str, seeds, out_dir: str, *,
     subsample actually bites on a tiny artifact). `steps` overrides the training budget.
     """
     contract_d = yaml.safe_load(Path(contract).read_text())
+    if tol is None:                                 # the plateau rule is CONTRACT-declared
+        tol = float(contract_d["information_matching"]["plateau_tol"])
     pinn_raw = yaml.safe_load(Path(pinn_cfg).read_text())
     im = pinn_raw.get("info_matching", {})
     cap = int(im.get("cap_multiplier", 5))

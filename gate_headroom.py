@@ -256,7 +256,8 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
              seed_list: list | None = None, mode: str = "field",
              out_dir: str = "results/gate",
              sigma_gamma_abs: float | None = None,
-             n_cloud_states: int = 2000, n_cloud_paths: int = 256) -> dict:
+             n_cloud_states: int = 2000, n_cloud_paths: int = 256,
+             spread_threshold_rel: float | None = None) -> dict:
     """Run the oracle-headroom gate on the confirmatory cell and write
     headroom.csv + headroom_report.md into `out_dir`.
 
@@ -276,13 +277,21 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
     sigma_gamma_abs : float, optional
         Absolute pilot-calibrated sigma_gamma (CLI --sigma-gamma); when given
         the sweep is replaced by this single "pilot" point.
+    spread_threshold_rel : float, optional
+        The pre-registered relative CVaR95 spread the DECISION section flags on.
+        Defaults to the CONTRACT (oracle_headroom_gate.spread_threshold_rel) —
+        never a Python literal (audit G1/C1).
 
     Returns
     -------
     dict with keys records (per sigma/tc/seed), summary (per sigma/tc),
-    decision (per tc), rms_gamma, csv_path, report_path, rows (engine rows).
+    decision (per tc), spread_threshold_rel, rms_gamma, csv_path, report_path,
+    rows (engine rows).
     """
     cfg = _trim_to_combined_cell(copy.deepcopy(cfg))
+    if spread_threshold_rel is None:
+        spread_threshold_rel = hb.contract_thresholds(cfg)["gate_spread_threshold_rel"]
+    spread_threshold_rel = float(spread_threshold_rel)
     if seed_list is not None:
         cfg["derived"]["seeds"] = [int(s) for s in seed_list]
     bm, eng = cfg["benchmark"], cfg["engine"]
@@ -352,28 +361,30 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
                 "ci_excludes_zero_frac": float(np.mean(
                     [g["ci_excludes_zero"] for g in grp])),
                 "t_ex_mean": float(np.mean([g["t_ex"] for g in grp]))})
-    # smallest sigma_rel whose mean spread clears the pre-registered 10%
-    # relative threshold WITH every seed's paired CI excluding 0
+    # smallest sigma_rel whose mean spread clears the pre-registered relative
+    # threshold (contract oracle_headroom_gate.spread_threshold_rel) WITH every
+    # seed's paired CI excluding 0
     decision = {}
     for tc in tiers:
         decision[tc] = next(
             (s for s in summary if s["tc"] == tc
-             and s["spread_rel_mean"] >= 0.10
+             and s["spread_rel_mean"] >= spread_threshold_rel
              and s["ci_excludes_zero_frac"] == 1.0), None)
 
     os.makedirs(out_dir, exist_ok=True)
     csv_path = hb.write_rows_csv(records, os.path.join(out_dir, "headroom.csv"))
     report_path = _write_report(
         os.path.join(out_dir, "headroom_report.md"), cfg, mode, rms, arms,
-        tiers, seeds, summary, decision)
+        tiers, seeds, summary, decision, spread_threshold_rel)
     return {"records": records, "summary": summary, "decision": decision,
+            "spread_threshold_rel": spread_threshold_rel,
             "rms_gamma": rms, "csv_path": csv_path,
             "report_path": report_path, "rows": rows}
 
 
 def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
                   tiers: list, seeds: list, summary: list,
-                  decision: dict) -> str:
+                  decision: dict, spread_threshold_rel: float) -> str:
     """headroom_report.md: run header, per-(sigma, tc) seed-mean table, and
     the DECISION section (explicitly a HUMAN go/no-go)."""
     eng = cfg["engine"]
@@ -415,9 +426,10 @@ def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
         "",
         "## DECISION (per tc tier)",
         "",
-        "Smallest sigma_rel with mean spread_rel >= 0.10 (the pre-registered",
-        "relative CVaR95 threshold) AND the paired per-path bootstrap 95% CI",
-        "excluding 0 in every seed:",
+        f"Smallest sigma_rel with mean spread_rel >= {spread_threshold_rel} (the",
+        "pre-registered relative CVaR95 threshold, contract",
+        "`oracle_headroom_gate.spread_threshold_rel`) AND the paired per-path",
+        "bootstrap 95% CI excluding 0 in every seed:",
         "",
     ]
     for tc in tiers:
