@@ -41,28 +41,37 @@ _AGG_COLS = ["sweep", "direction", "magnitude", "lambda_j", "sigma_j", "in_model
              "pnl_vs_baseline_cvar_diff_mean", "cvar_boot_se_mean"]
 
 
-def _agg_row(method, magnitude, tc):
+def _agg_row(method, magnitude, tc, blanks=()):
+    """One agg row. `blanks` names columns to leave EMPTY for this method, the
+    on-disk state the engine really produces (delta-gamma rows carry t_ex="",
+    every arm does when the oracle provider is absent)."""
     cv, gc, te, tcc, dc, diff = _HEDGE_METHODS[method]
     # misspec (m=1.0) is the headline; in-model (m=0.0) is a milder, shrunk copy
     scale = 1.0 if magnitude >= 0.5 else 0.4
     cv_m = cv * scale + tc * 2.0                        # cost lifts CVaR with tc
-    return {"sweep": "perturbation", "direction": "combined", "magnitude": magnitude,
-            "lambda_j": "", "sigma_j": "", "in_model": magnitude == 0.0,
-            "method": method, "tc": tc, "cvar_level": 0.95, "n_seeds": 5,
-            "cvar_mean": round(cv_m, 6), "cvar_seed_std": 0.03,
-            "mean_pnl_mean": -0.1, "turnover_mean": 0.5 + te, "turnover_seed_std": 0.02,
-            "tc_component_mean": tcc, "directional_component_mean": dc,
-            "t_ex_mean": te, "t_ex_seed_std": 0.01,
-            "gap_closed_mean": gc, "gap_closed_seed_std": 0.05,
-            "pnl_vs_baseline_cvar_diff_mean": diff, "cvar_boot_se_mean": 0.02}
+    row = {"sweep": "perturbation", "direction": "combined", "magnitude": magnitude,
+           "lambda_j": "", "sigma_j": "", "in_model": magnitude == 0.0,
+           "method": method, "tc": tc, "cvar_level": 0.95, "n_seeds": 5,
+           "cvar_mean": round(cv_m, 6), "cvar_seed_std": 0.03,
+           "mean_pnl_mean": -0.1, "turnover_mean": 0.5 + te, "turnover_seed_std": 0.02,
+           "tc_component_mean": tcc, "directional_component_mean": dc,
+           "t_ex_mean": te, "t_ex_seed_std": 0.01,
+           "gap_closed_mean": gc, "gap_closed_seed_std": 0.05,
+           "pnl_vs_baseline_cvar_diff_mean": diff, "cvar_boot_se_mean": 0.02}
+    for col in blanks:
+        row[col] = ""
+    return row
 
 
-def _write_hedging_agg(path):
+def _write_hedging_agg(path, blanks=None):
+    """`blanks`: {method: (column, ...)} to leave empty; default populates all."""
+    blanks = blanks or {}
     rows = []
     for magnitude in (0.0, 1.0):
         for tc in (0.0, 0.01, 0.02):
             for method in _HEDGE_METHODS:
-                rows.append(_agg_row(method, magnitude, tc))
+                rows.append(_agg_row(method, magnitude, tc,
+                                     blanks=blanks.get(method, ())))
     _dictwrite(path, _AGG_COLS, rows)
     return path
 
@@ -199,6 +208,94 @@ def test_e4_writes_png_and_csv(results, tmp_path):
     # band (smoothed) and Sobolev (rung3) both present in the scatter panel
     scat = {r["method"] for r in rows if r["panel"] == "scatter"}
     assert "standard_pinn_smoothed" in scat and "rung3" in scat
+
+
+# ---------------------------------------------------------------------------
+# X1 — a MISSING cell must not be DRAWN as a real 0.0
+#
+# The backing CSVs are already right (_fmt maps None -> ""); it is the PNG that
+# lied. T_ex = 0 is the contract's cost-channel confirming evidence ("this arm
+# trades exactly like the oracle"), so a blank cell drawn at zero is an
+# affirmative finding invented out of an absence. matplotlib omits NaN bars.
+# ---------------------------------------------------------------------------
+
+def _capture_bars(monkeypatch):
+    """Record every Axes.bar height the exhibit actually draws."""
+    import matplotlib.axes
+
+    drawn: list[list[float]] = []
+    orig = matplotlib.axes.Axes.bar
+
+    def spy(self, x, height, *a, **kw):
+        drawn.append([float(h) for h in height])
+        return orig(self, x, height, *a, **kw)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "bar", spy)
+    return drawn
+
+
+def _is_nan(v):
+    return v != v
+
+
+def test_e2_missing_t_ex_is_not_drawn_as_zero(tmp_path, monkeypatch):
+    agg = _write_hedging_agg(str(tmp_path / "results" / exhibits.HEDGING_AGG),
+                             blanks={"rung1": ("t_ex_mean", "t_ex_seed_std")})
+    drawn = _capture_bars(monkeypatch)
+    exhibits.exhibit_e2(agg, str(tmp_path / "out"))
+
+    tex_methods = [m for m in exhibits.MECH_ARMS if m != exhibits.ORACLE_ARM]
+    i = tex_methods.index("rung1")
+    heights = [h for h in drawn if len(h) == len(tex_methods)]
+    assert heights, "E2 drew no T_ex bar row"
+    bars = heights[0]
+    assert _is_nan(bars[i]), (
+        f"blank t_ex_mean drawn at {bars[i]!r}; a missing cell must be absent, "
+        "not a bar at the cost channel's confirming value")
+    # the populated arms are untouched
+    assert bars[tex_methods.index("rung3")] == _HEDGE_METHODS["rung3"][2]
+    # and the CSV, which was always correct, still records the blank
+    rows = exhibits.read_csv(os.path.join(str(tmp_path / "out"), "e2_mechanism.csv"))
+    tex = {r["method"]: r["value"] for r in rows if r["panel"] == "t_ex"}
+    assert tex["rung1"] == ""
+
+
+def test_e4_missing_gap_closed_is_not_drawn_as_zero(tmp_path, monkeypatch):
+    arms = ("standard_pinn", "rung1", "rung2", "rung3", "sans_pde")
+    agg = _write_hedging_agg(
+        str(tmp_path / "results" / exhibits.HEDGING_AGG),
+        blanks={"rung2": ("gap_closed_mean", "tc_component_mean",
+                          "directional_component_mean")})
+    greek = _write_greek_agg(str(tmp_path / "results" / exhibits.GREEK_AGG))
+    drawn = _capture_bars(monkeypatch)
+    exhibits.exhibit_e4(agg, greek, str(tmp_path / "out"))
+
+    i = arms.index("rung2")
+    rows = [h for h in drawn if len(h) == len(arms)]
+    assert len(rows) >= 3, "E4 drew fewer bar rows than (a) + (b)'s two stacks"
+    gap, dirs, costs = rows[0], rows[1], rows[2]
+    assert _is_nan(gap[i]), (
+        f"blank gap_closed_mean drawn at {gap[i]!r}; 0.0 reads as 'closed none "
+        "of the oracle gap', an affirmative negative result")
+    assert _is_nan(dirs[i]) and _is_nan(costs[i])
+    assert gap[arms.index("rung3")] == _HEDGE_METHODS["rung3"][1]
+
+
+def test_e4_missing_vanna_reduction_is_not_drawn_as_zero(tmp_path, monkeypatch):
+    agg = _write_hedging_agg(str(tmp_path / "results" / exhibits.HEDGING_AGG))
+    greek_path = str(tmp_path / "results" / exhibits.GREEK_AGG)
+    _write_greek_agg(greek_path)
+    # drop rung3's vanna row for one regime entirely (the arm was not evaluated)
+    kept = [r for r in exhibits.read_csv(greek_path)
+            if not (r["arm"] == "rung3" and r["greek"] == "vanna"
+                    and r["regime"] == "near_feller")]
+    _dictwrite(greek_path, _GREEK_COLS, kept)
+
+    drawn = _capture_bars(monkeypatch)
+    exhibits.exhibit_e4(agg, greek_path, str(tmp_path / "out"))
+    pairs = [h for h in drawn if len(h) == 2]
+    assert pairs, "E4 drew no vanna bar row"
+    assert _is_nan(pairs[0][0]) and not _is_nan(pairs[0][1])
 
 
 # ---------------------------------------------------------------------------

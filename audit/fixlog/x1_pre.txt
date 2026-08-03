@@ -1,0 +1,82 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+__________________ test_e2_missing_t_ex_is_not_drawn_as_zero ___________________
+
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-24/test_e2_missing_t_ex_is_not_dr0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11ffde300>
+
+    def test_e2_missing_t_ex_is_not_drawn_as_zero(tmp_path, monkeypatch):
+        agg = _write_hedging_agg(str(tmp_path / "results" / exhibits.HEDGING_AGG),
+                                 blanks={"rung1": ("t_ex_mean", "t_ex_seed_std")})
+        drawn = _capture_bars(monkeypatch)
+        exhibits.exhibit_e2(agg, str(tmp_path / "out"))
+    
+        tex_methods = [m for m in exhibits.MECH_ARMS if m != exhibits.ORACLE_ARM]
+        i = tex_methods.index("rung1")
+        heights = [h for h in drawn if len(h) == len(tex_methods)]
+        assert heights, "E2 drew no T_ex bar row"
+        bars = heights[0]
+>       assert _is_nan(bars[i]), (
+            f"blank t_ex_mean drawn at {bars[i]!r}; a missing cell must be absent, "
+            "not a bar at the cost channel's confirming value")
+E       AssertionError: blank t_ex_mean drawn at 0.0; a missing cell must be absent, not a bar at the cost channel's confirming value
+E       assert False
+E        +  where False = _is_nan(0.0)
+
+test_exhibits.py:252: AssertionError
+_______________ test_e4_missing_gap_closed_is_not_drawn_as_zero ________________
+
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-24/test_e4_missing_gap_closed_is_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11ffdd9a0>
+
+    def test_e4_missing_gap_closed_is_not_drawn_as_zero(tmp_path, monkeypatch):
+        arms = ("standard_pinn", "rung1", "rung2", "rung3", "sans_pde")
+        agg = _write_hedging_agg(
+            str(tmp_path / "results" / exhibits.HEDGING_AGG),
+            blanks={"rung2": ("gap_closed_mean", "tc_component_mean",
+                              "directional_component_mean")})
+        greek = _write_greek_agg(str(tmp_path / "results" / exhibits.GREEK_AGG))
+        drawn = _capture_bars(monkeypatch)
+        exhibits.exhibit_e4(agg, greek, str(tmp_path / "out"))
+    
+        i = arms.index("rung2")
+        rows = [h for h in drawn if len(h) == len(arms)]
+        assert len(rows) >= 3, "E4 drew fewer bar rows than (a) + (b)'s two stacks"
+        gap, dirs, costs = rows[0], rows[1], rows[2]
+>       assert _is_nan(gap[i]), (
+            f"blank gap_closed_mean drawn at {gap[i]!r}; 0.0 reads as 'closed none "
+            "of the oracle gap', an affirmative negative result")
+E       AssertionError: blank gap_closed_mean drawn at 0.0; 0.0 reads as 'closed none of the oracle gap', an affirmative negative result
+E       assert False
+E        +  where False = _is_nan(0.0)
+
+test_exhibits.py:277: AssertionError
+_____________ test_e4_missing_vanna_reduction_is_not_drawn_as_zero _____________
+
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-24/test_e4_missing_vanna_reductio0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12fa6bec0>
+
+    def test_e4_missing_vanna_reduction_is_not_drawn_as_zero(tmp_path, monkeypatch):
+        agg = _write_hedging_agg(str(tmp_path / "results" / exhibits.HEDGING_AGG))
+        greek_path = str(tmp_path / "results" / exhibits.GREEK_AGG)
+        _write_greek_agg(greek_path)
+        # drop rung3's vanna row for one regime entirely (the arm was not evaluated)
+        kept = [r for r in exhibits.read_csv(greek_path)
+                if not (r["arm"] == "rung3" and r["greek"] == "vanna"
+                        and r["regime"] == "near_feller")]
+        _dictwrite(greek_path, _GREEK_COLS, kept)
+    
+        drawn = _capture_bars(monkeypatch)
+        exhibits.exhibit_e4(agg, greek_path, str(tmp_path / "out"))
+        pairs = [h for h in drawn if len(h) == 2]
+        assert pairs, "E4 drew no vanna bar row"
+>       assert _is_nan(pairs[0][0]) and not _is_nan(pairs[0][1])
+E       assert (False)
+E        +  where False = _is_nan(0.0)
+
+test_exhibits.py:298: AssertionError
+=========================== short test summary info ============================
+FAILED test_exhibits.py::test_e2_missing_t_ex_is_not_drawn_as_zero - Assertio...
+FAILED test_exhibits.py::test_e4_missing_gap_closed_is_not_drawn_as_zero - As...
+FAILED test_exhibits.py::test_e4_missing_vanna_reduction_is_not_drawn_as_zero
+3 failed, 16 deselected in 0.65s

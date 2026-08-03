@@ -147,6 +147,18 @@ def _num(v):
         return None
 
 
+def _nan_if_missing(v) -> float:
+    """`_num(v)`, with a MISSING cell as NaN rather than 0.0.
+
+    Plotting a blank as 0.0 substitutes a real, meaningful value: T_ex = 0 is
+    the contract's cost-channel confirming evidence and gap_closed = 0 is an
+    affirmative negative result, so an absent cell would render as a finding.
+    matplotlib omits NaN bars/points instead of drawing them at zero.
+    """
+    f = _num(v)
+    return float("nan") if f is None else f
+
+
 def _fmt(v) -> str:
     """Deterministic cell text for the backing CSV (bit-stable across runs)."""
     if v is None or v == "":
@@ -428,8 +440,11 @@ def exhibit_e2(hedging_agg_csv, out_dir, *, arms=MECH_ARMS, focal=FOCAL_ARM,
         tvals, terr, tcol = [], [], []
         for m in tex_methods:
             row = _by_method(agg, misspec, tex_tc).get(m, {})
-            tvals.append(_num(row.get("t_ex_mean")) or 0.0)
-            terr.append(_num(row.get("t_ex_seed_std")) or 0.0)
+            # MISSING -> NaN, never 0.0: matplotlib omits a NaN bar, whereas
+            # T_ex = 0 is the cost channel's confirming reading ("trades exactly
+            # like the oracle"). Same handling as the 2x2 inset below.
+            tvals.append(_nan_if_missing(row.get("t_ex_mean")))
+            terr.append(_nan_if_missing(row.get("t_ex_seed_std")))
             tcol.append(_method_color(m))
         ax_tex.bar(range(len(tex_methods)), tvals, yerr=terr, capsize=3, color=tcol)
         ax_tex.axhline(0.0, lw=0.8, color="k")
@@ -608,8 +623,8 @@ def exhibit_e4(hedging_agg_csv, greek_agg_csv, out_dir, *,
         ax_gap, ax_split, ax_vanna, ax_scatter = axes.ravel()
 
         # (a) gap closed
-        gvals = [_num(bym.get(m, {}).get("gap_closed_mean")) for m in arms]
-        ax_gap.bar(range(len(arms)), [v if v is not None else 0.0 for v in gvals],
+        gvals = [_nan_if_missing(bym.get(m, {}).get("gap_closed_mean")) for m in arms]
+        ax_gap.bar(range(len(arms)), gvals,
                    color=[_method_color(m) for m in arms])
         ax_gap.axhline(1.0, ls="--", lw=1.0, color=_NEUTRAL)
         ax_gap.set_xticks(range(len(arms)))
@@ -619,8 +634,9 @@ def exhibit_e4(hedging_agg_csv, greek_agg_csv, out_dir, *,
         ax_gap.set_title("(a) fraction of oracle gap closed", fontsize=10)
 
         # (b) cost vs directional split (stacked)
-        costs = [_num(bym.get(m, {}).get("tc_component_mean")) or 0.0 for m in arms]
-        dirs = [_num(bym.get(m, {}).get("directional_component_mean")) or 0.0 for m in arms]
+        costs = [_nan_if_missing(bym.get(m, {}).get("tc_component_mean")) for m in arms]
+        dirs = [_nan_if_missing(bym.get(m, {}).get("directional_component_mean"))
+                for m in arms]
         x = range(len(arms))
         ax_split.bar(x, dirs, color="#1baf7a", label="directional PnL")
         ax_split.bar(x, [-c for c in costs], bottom=dirs, color="#e34948",
@@ -637,8 +653,8 @@ def exhibit_e4(hedging_agg_csv, greek_agg_csv, out_dir, *,
         vvals, verr = [], []
         for regime in vanna_regimes:
             gr = _greek_row(greek, focal, "vanna", regime) or {}
-            vvals.append(_num(gr.get("reduction_vs_standard_pinn_mean")) or 0.0)
-            verr.append(_num(gr.get("reduction_vs_standard_pinn_std")) or 0.0)
+            vvals.append(_nan_if_missing(gr.get("reduction_vs_standard_pinn_mean")))
+            verr.append(_nan_if_missing(gr.get("reduction_vs_standard_pinn_std")))
         ax_vanna.bar(range(len(vanna_regimes)), vvals, yerr=verr, capsize=3,
                      color=[hb._OVERLAY_COLORS[i + 3] for i in range(len(vanna_regimes))])
         ax_vanna.axhline(0.15, ls="--", lw=1.0, color=_NEUTRAL)
