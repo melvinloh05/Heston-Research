@@ -327,6 +327,39 @@ def test_select_lambdas_writes_yaml_and_guards_locked_test_set(tmp_path):
         select_lambdas([1.0], [1.0], [1.0], fit_and_val_score=score, test_set=g3)
 
 
+def test_select_lambdas_is_staged_and_records_its_source_arms(npz, tmp_path):
+    """Q3: lambda_pde is selected on the BASELINE arm (for which the PDE residual is the
+    only structural signal), then (lambda_gamma, lambda_vega) on rung3 at that fixed
+    lambda_pde. Both source arms are recorded IN the artifact, and the one shared
+    lambda_pde reaches the baseline and the treatment arm identically."""
+    lam_sel = yaml.safe_load(open(CONTRACT))["lambda_selection"]
+    out = tmp_path / "lam_staged.yaml"
+    res = train.main(["--select-lambdas", "--seed", "0", "--data", npz,
+                      "--pinn-cfg", CFG, "--contract", CONTRACT, "--out", str(out),
+                      "--cand-pde", "0.1,1.0", "--cand-gamma", "1.0",
+                      "--cand-vega", "0.3,1.0", "--steps", "6"])
+    lam = yaml.safe_load(out.read_text())
+
+    # provenance lives in the artifact, and matches the contract's pre-registered sourcing
+    assert lam["sources"]["lambda_pde"] == lam_sel["lambda_pde"]["source_arm"]
+    assert lam["sources"]["lambda_gamma"] == lam_sel["lambda_gamma"]["source_arm"]
+    assert lam["sources"]["lambda_vega"] == lam_sel["lambda_vega"]["source_arm"]
+    assert lam["sources"]["lambda_pde"] != lam["sources"]["lambda_gamma"]
+
+    # STAGED, not joint: 2 lambda_pde fits on the baseline, then a 1x2 grid on rung3
+    assert len(lam["scores_table_pde"]) == 2
+    assert all(set(r) == {"lambda_pde", "score"} for r in lam["scores_table_pde"])
+    assert len(lam["scores_table"]) == 2
+    assert all(r["lambda_pde"] == lam["lambda_pde"] for r in lam["scores_table"])
+    assert res["lambda_pde"] in (0.1, 1.0) and res["lambda_delta"] == 1.0
+
+    # the shared lambda_pde reaches BOTH arms identically (_apply_lambdas unchanged)
+    std = train._apply_lambdas(load_arm(CFG, lam_sel["lambda_pde"]["source_arm"]), lam)
+    r3 = train._apply_lambdas(load_arm(CFG, lam_sel["lambda_gamma"]["source_arm"]), lam)
+    assert std.lambda_pde == lam["lambda_pde"] == r3.lambda_pde
+    assert r3.lambda_gamma == lam["lambda_gamma"] and r3.lambda_vega == lam["lambda_vega"]
+
+
 def test_select_lambdas_cli_smoke_writes_yaml(npz, tmp_path):
     out = tmp_path / "lam.yaml"
     res = train.main(["--select-lambdas", "--arm", "rung3_delta_gamma_vega", "--seed", "0",

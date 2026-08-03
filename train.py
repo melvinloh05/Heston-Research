@@ -16,7 +16,10 @@ uses the pinn-config defaults. Every run writes:
 
 --pilot runs a SHORT fit (steps=2000 unless --steps overrides) and prints
 `sigma_gamma_pilot` — the oracle-headroom-gate input (PINN gamma error scale).
---select-lambdas runs the VALIDATION-ONLY joint lambda search instead of a training run.
+--select-lambdas runs the VALIDATION-ONLY STAGED lambda search instead of a training run:
+lambda_pde on the contract's `lambda_selection.lambda_pde.source_arm` (the baseline), then
+(lambda_gamma, lambda_vega) on the rung3 source arm at that fixed lambda_pde. The emitted
+lambdas_selected.yaml records each value's SOURCE ARM (contract Q3).
 """
 from __future__ import annotations
 
@@ -127,22 +130,47 @@ def _parse_floats(s: str | None) -> list[float] | None:
 
 
 def _run_select_lambdas(args) -> dict:
-    """VALIDATION-ONLY joint (lambda_pde, lambda_gamma, lambda_vega) search -> yaml."""
+    """VALIDATION-ONLY STAGED lambda search -> lambdas_selected.yaml (contract Q3).
+
+    The contract's `lambda_selection` section pre-registers WHICH ARM each shared lambda
+    is sourced from; this function implements exactly that, in two stages:
+
+      stage 1  lambda_pde, 1-D over its candidates, scored on
+               `lambda_selection.lambda_pde.source_arm` (standard_pinn) — the arm for
+               which the PDE residual is the ONLY structural signal. Selecting it on the
+               treatment arm and then applying it to the baseline handicaps the baseline;
+               sourcing it here is the conservative direction wrt the hypothesis.
+      stage 2  (lambda_gamma, lambda_vega), 2-D at the stage-1 lambda_pde, scored on
+               `lambda_selection.lambda_{gamma,vega}.source_arm` (rung3).
+
+    SHARING lambda_pde across arms is unchanged and deliberate (one model class, identical
+    architecture/ansatz — see methods.ansatz_control); only its SOURCE moved. Both stages
+    touch train/val only, both run behind the same LockedTestSet, and both SELECTED values
+    are written with their SOURCE ARM so provenance lives in the artifact rather than in a
+    reader's memory of which arm train.py happened to default to.
+    """
     pinn_raw = yaml.safe_load(open(args.pinn_cfg))
+    contract = yaml.safe_load(Path(args.contract).read_text())
+    lam_sel = contract["lambda_selection"]
+    pde_arm = str(lam_sel["lambda_pde"]["source_arm"])
+    gv_arm = str(lam_sel["lambda_gamma"]["source_arm"])
+    if gv_arm != str(lam_sel["lambda_vega"]["source_arm"]):
+        raise ValueError("lambda_gamma and lambda_vega must share a source arm; the 2-D "
+                         "stage fits ONE model per (gamma, vega) combo")
     tcfg = replace(TrainConfig.from_dict(pinn_raw.get("training", {})),
                    steps=args.steps if args.steps is not None else 4000)
     ranges, anchors, feller_min, excise = pde_sampling_spec(args.contract, args.pinn_cfg)
-    base = load_arm(args.pinn_cfg, "rung3_delta_gamma_vega")
-    train_ds = ArmDataset(args.data, base, "train", seed=args.seed)
-    val_ds = ArmDataset(args.data, base, "val", seed=args.seed)
     guard = LockedTestSet(args.anchor_grids or "<<held-out anchor grids>>")
-    cpde = _parse_floats(args.cand_pde) or pinn_raw.get("sweeps", {}).get(
-        "lambda_pde", [0.0, 0.01, 0.1, 1.0])
-    cg = _parse_floats(args.cand_gamma) or [0.3, 1.0, 3.0]   # playbook pre-reg {0.3,1,3}
-    cv = _parse_floats(args.cand_vega) or [0.3, 1.0, 3.0]     # playbook pre-reg {0.3,1,3}
+    cpde = _parse_floats(args.cand_pde) or lam_sel["lambda_pde"]["candidates"]
+    cg = _parse_floats(args.cand_gamma) or lam_sel["lambda_gamma"]["candidates"]
+    cv = _parse_floats(args.cand_vega) or lam_sel["lambda_vega"]["candidates"]
 
-    def fit_and_val_score(lp: float, lg: float, lv: float) -> float:
-        cfg = replace(base, lambda_pde=lp, lambda_gamma=lg, lambda_vega=lv)
+    def _arm_data(arm: str):
+        cfg = load_arm(args.pinn_cfg, arm)
+        return (cfg, ArmDataset(args.data, cfg, "train", seed=args.seed),
+                ArmDataset(args.data, cfg, "val", seed=args.seed))
+
+    def _score(cfg, train_ds, val_ds) -> float:
         model, best_state, _, _ = train_model(
             cfg, train_ds, val_ds, tcfg, args.seed, device=args.device,
             pde_ranges=ranges, pde_anchors=anchors, feller_min=feller_min,
@@ -150,15 +178,58 @@ def _run_select_lambdas(args) -> dict:
         model.load_state_dict(best_state)
         return _val_greek_score(model, val_ds, args.device)
 
-    chash = config_hash(base, args.seed, data_manifest_sha(args.data), None)
-    out_path = str(args.out) if args.out else None
-    res = select_lambdas(cpde, cg, cv, fit_and_val_score=fit_and_val_score,
-                         test_set=guard, out_path=out_path, config_hash=chash)
-    print(f"selected lambda_pde={res['lambda_pde']} lambda_gamma={res['lambda_gamma']} "
-          f"lambda_vega={res['lambda_vega']} (lambda_delta fixed 1.0); "
-          f"scored {len(res['scores_table'])} combos on validation")
-    if out_path:
-        print(f"wrote {out_path}")
+    # ---- stage 1: lambda_pde on the BASELINE arm (gamma/vega are OFF there) ----
+    pde_cfg, pde_train, pde_val = _arm_data(pde_arm)
+
+    def score_pde(lp: float, _lg: float, _lv: float) -> float:
+        return _score(replace(pde_cfg, lambda_pde=lp), pde_train, pde_val)
+
+    stage1 = select_lambdas(cpde, [1.0], [1.0], fit_and_val_score=score_pde,
+                            test_set=guard)
+    lambda_pde = float(stage1["lambda_pde"])
+
+    # ---- stage 2: (lambda_gamma, lambda_vega) on rung3 at that fixed lambda_pde ----
+    gv_cfg, gv_train, gv_val = _arm_data(gv_arm)
+
+    def score_gv(lp: float, lg: float, lv: float) -> float:
+        return _score(replace(gv_cfg, lambda_pde=lp, lambda_gamma=lg, lambda_vega=lv),
+                      gv_train, gv_val)
+
+    stage2 = select_lambdas([lambda_pde], cg, cv, fit_and_val_score=score_gv,
+                            test_set=guard)
+
+    chash = config_hash(gv_cfg, args.seed, data_manifest_sha(args.data), None)
+    res = {
+        "lambda_pde": lambda_pde,
+        "lambda_gamma": float(stage2["lambda_gamma"]),
+        "lambda_vega": float(stage2["lambda_vega"]),
+        "lambda_delta": float(stage2["lambda_delta"]),
+        # provenance: WHICH ARM each value was selected on (contract lambda_selection)
+        "sources": {"lambda_pde": pde_arm, "lambda_gamma": gv_arm,
+                    "lambda_vega": gv_arm, "lambda_delta": "fixed_not_swept"},
+        "selection": {
+            "protocol": "staged: 1-D lambda_pde on the source arm, then 2-D "
+                        "(lambda_gamma, lambda_vega) at that fixed lambda_pde",
+            "tune_on": str(lam_sel.get("tune_on", "validation_only")),
+            "candidates": {"lambda_pde": [float(x) for x in cpde],
+                           "lambda_gamma": [float(x) for x in cg],
+                           "lambda_vega": [float(x) for x in cv]},
+            "seed": int(args.seed), "steps": int(tcfg.steps)},
+        # stage 1 varied ONLY lambda_pde; the joint grid's placeholder columns are dropped
+        "scores_table_pde": [{"lambda_pde": r["lambda_pde"], "score": r["score"]}
+                             for r in stage1["scores_table"]],
+        "scores_table": stage2["scores_table"],
+        "config_hash": chash,
+    }
+    if args.out:
+        Path(args.out).write_text(yaml.safe_dump(res, sort_keys=False))
+    print(f"selected lambda_pde={res['lambda_pde']} (on {pde_arm}, "
+          f"{len(cpde)} candidates) lambda_gamma={res['lambda_gamma']} "
+          f"lambda_vega={res['lambda_vega']} (on {gv_arm}, "
+          f"{len(res['scores_table'])} combos) (lambda_delta fixed 1.0); "
+          f"validation only")
+    if args.out:
+        print(f"wrote {args.out}")
     return res
 
 

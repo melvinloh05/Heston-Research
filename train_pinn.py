@@ -511,7 +511,13 @@ def select_lambdas(candidates_pde: Iterable[float], candidates_gamma: Iterable[f
                    fit_and_val_score: Callable[[float, float, float], float],
                    test_set: LockedTestSet, out_path: str | None = None,
                    config_hash: str | None = None, lambda_delta: float = 1.0) -> dict:
-    """Pick (lambda_pde, lambda_gamma, lambda_vega) for the rung3 fit on VALIDATION ONLY.
+    """Pick (lambda_pde, lambda_gamma, lambda_vega) on VALIDATION ONLY.
+
+    A generic guarded grid search. The PROTOCOL that decides which arm scores which axis
+    lives in train.py::_run_select_lambdas, which calls this TWICE per the contract's
+    `lambda_selection` (1-D lambda_pde on the baseline source arm, then 2-D
+    (lambda_gamma, lambda_vega) on the rung3 source arm at that fixed lambda_pde) — do not
+    collapse those two calls back into one joint search (contract Q3).
 
     Grid-searches the three candidate axes, scoring each combo with `fit_and_val_score`
     (a SHORT rung3 fit on the training split -> mean normalized validation RMSE of
