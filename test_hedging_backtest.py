@@ -613,6 +613,77 @@ def test_persist_pnl_npz():
         assert row["mean_pnl"] == float(pnl.mean())   # CSV row <-> persisted PnL
 
 
+def test_realized_dt_matches_the_contract():
+    """H1/Q1: `dt` is DERIVED, not declared — T'=0.17 does not divide evenly into
+    daily steps. The grid the engine actually lays down must equal the contract's
+    amended rebalancing.{n_steps, dt_realized}; a disagreement means the code and
+    the pre-registration have drifted apart."""
+    cfg = hb.resolve_config(str(_DIR / "heston_benchmark_v6.yaml"),
+                            str(_DIR / "hedging_config.yaml"))
+    bm, eng = cfg["benchmark"], cfg["engine"]
+    hs = bm["hedging_simulation"]
+    reb = hs["rebalancing"]
+    T_prime = float(hs["horizon"]["T_prime"])
+    freq = eng["rebalancing"]["frequency_per_year"]
+    assert freq == reb["frequency_per_year"]        # engine mirrors the contract's target
+
+    n_steps = int(round(T_prime * freq))            # Hedging_backtest._run_sweep
+    assert n_steps == int(reb["n_steps"])
+    assert abs(T_prime / n_steps - float(reb["dt_realized"])) < 1e-6
+
+    # the simulator's own grid, not just the arithmetic
+    p = hb.SimParams.from_regime(bm["regimes"]["baseline"], bm["grid"]["r"],
+                                 bm["grid"]["q"])
+    times, S, _v = hb.simulate_heston_qe(p, 100.0, T_prime, n_steps, 8, 0,
+                                         eng["simulation"]["psi_c"])
+    steps = np.diff(times)
+    assert steps.size == n_steps and S.shape[1] == n_steps + 1
+    assert np.allclose(steps, float(reb["dt_realized"]), atol=1e-6)
+    assert abs(times[-1] - T_prime) < 1e-12         # the horizon is exact, dt is not
+
+
+class _ZeroWatchProvider(BSProvider):
+    """BSProvider that records whether the engine ever handed it an EXACT v = 0
+    (the QE exponential branch's atom at zero) and refuses non-finite output."""
+
+    def __init__(self, r, q):
+        super().__init__(r, q)
+        self.saw_zero = False
+        self.n_states = 0
+
+    def evaluate(self, S, v, tau, K):
+        va = np.asarray(v, float)
+        self.saw_zero = self.saw_zero or bool((va == 0.0).any())
+        self.n_states += va.size
+        out = super().evaluate(S, v, tau, K)
+        assert all(np.all(np.isfinite(out[k])) for k in out), "provider went non-finite"
+        return out
+
+
+def test_qe_exponential_branch_atom_reaches_the_providers():
+    """The QE exponential branch has an atom at v = 0 (`np.where(ue <= pp, 0.0, ...)`)
+    and the GreekProvider contract says outputs must be finite for all v >= 0. The
+    baseline regime (Feller 1.78) produces NO exact zeros, so no engine test exercised
+    it. This drives the contract's own Feller-stressed anchor instead."""
+    cfg = _cfg(n_paths=128, freq=252, n_boot=10)
+    bm = cfg["benchmark"]
+    stressed = bm["regimes"]["feller_violating_volvol"]
+    kappa, theta, xi = stressed["kappa"], stressed["theta"], stressed["xi"]
+    assert 2 * kappa * theta / xi ** 2 < 0.5              # the regime IS Feller-violating
+    # in-memory only (the contract file is untouched): hedge the stressed regime
+    bm["regimes"]["baseline"] = dict(stressed)
+    cfg = _trim_to_one_cell(cfg, direction="xi_up", magnitude=1.0)
+
+    r, q = bm["grid"]["r"], bm["grid"]["q"]
+    prov = _ZeroWatchProvider(r, q)
+    rows = hb.run_headline(cfg, {"oracle": prov})
+
+    assert prov.n_states > 0
+    assert prov.saw_zero, "no exact v == 0 reached the provider — branch not exercised"
+    assert rows and all(np.isfinite(float(r_["cvar"])) for r_ in rows)
+    assert all(np.isfinite(float(r_["mean_pnl"])) for r_ in rows)
+
+
 def test_delta_overlay_plot():
     try:
         import matplotlib  # noqa: F401
