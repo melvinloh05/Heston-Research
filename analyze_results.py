@@ -723,19 +723,27 @@ def _mechanism_reading(gaps: list[dict], t_ex: dict) -> dict:
     t_ex(standard) (excess-over-oracle turnover; <0 = rung3 trades less).
 
     Readings (CLAUDE.md 'Mechanism'):
-      channel_i  (robustness): the tc=0 gap is present (CI excludes 0).
-      channel_ii (cost): the gap WIDENS with tc (|gap| grows and the top-tc CI
-                 excludes 0) AND t_ex(rung3)-t_ex(std) < 0 with CI excluding 0.
-                 t_ex unmoved (CI covers 0) KILLS channel_ii regardless of PnL.
+      channel_i  (robustness): the tc=0 gap is present AND is an IMPROVEMENT
+                 (CI excludes 0 on the improvement side, ci_hi < 0).
+      channel_ii (cost): the gap WIDENS with tc IN THE IMPROVEMENT DIRECTION
+                 (gap at the top tier is MORE negative, and its CI excludes 0 on
+                 the improvement side) AND t_ex(rung3)-t_ex(std) < 0 with CI
+                 excluding 0. t_ex unmoved (CI covers 0) KILLS channel_ii
+                 regardless of PnL.
       decomposition: both present. null: neither.
+
+    BOTH channels require the gap to be an IMPROVEMENT (audit A2): an arm that is
+    significantly WORSE at 0% TC, or one that degrades FASTER as costs rise, is the
+    mirror image of the hypothesis and reads 'null' — a pre-registered null is
+    publishable, an affirmative mechanism claim built on a wrong-signed gap is not.
     """
     by_tc = {round(float(g["tc"]), 12): g for g in gaps}
     tcs = sorted(by_tc)
     g0 = by_tc[tcs[0]]
     gmax = by_tc[tcs[-1]]
-    present_i = _excludes_zero(g0["ci_lo"], g0["ci_hi"])
-    widening = (_excludes_zero(gmax["ci_lo"], gmax["ci_hi"])
-                and abs(gmax["diff"]) > abs(g0["diff"]) + 1e-12)
+    present_i = _excludes_zero(g0["ci_lo"], g0["ci_hi"]) and g0["ci_hi"] < 0.0
+    widening = (_excludes_zero(gmax["ci_lo"], gmax["ci_hi"]) and gmax["ci_hi"] < 0.0
+                and gmax["diff"] < g0["diff"] - 1e-12)
     t_ex_reduced = _excludes_zero(t_ex["ci_lo"], t_ex["ci_hi"]) and t_ex["diff"] < 0.0
     present_ii = bool(widening and t_ex_reduced)
     if present_i and present_ii:

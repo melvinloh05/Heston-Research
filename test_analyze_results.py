@@ -402,6 +402,41 @@ def test_mechanism_reading_four_patterns():
     assert nul["reading"] == "null"
 
 
+def test_mechanism_wrong_direction_gap_is_not_a_channel():
+    """A2: the gaps are rung3 - standard in LOSS units, so a CI strictly ABOVE 0
+    means rung3 is significantly WORSE. Neither channel may be credited on it.
+
+    Each case below is the exact MIRROR of a pattern above, so if the reading were
+    sign-blind it would return the same affirmative label."""
+    # (i)-shaped but wrong-signed: significant tc=0 gap with rung3 WORSE
+    worse_i = ar._mechanism_reading(
+        [_gap(0.0, +1.0, +0.5, +1.5), _gap(0.02, +1.0, +0.5, +1.5)],
+        _tex(-0.1, -0.5, 0.3))
+    assert worse_i["reading"] == "null" and worse_i["present_i"] is False
+
+    # (ii)-shaped but wrong-signed: gap grows in MAGNITUDE with tc while rung3 is
+    # worse at every tier, and rung3 trades less -> must NOT read as the cost channel
+    worse_ii = ar._mechanism_reading(
+        [_gap(0.0, +0.05, -0.1, +0.2), _gap(0.02, +1.0, +0.6, +1.4)],
+        _tex(-2.0, -3.0, -1.0))
+    assert worse_ii["reading"] == "null"
+    assert worse_ii["present_ii"] is False and worse_ii["widening"] is False
+
+    # a gap that SHRINKS toward zero as tc rises is not widening either
+    shrinking = ar._mechanism_reading(
+        [_gap(0.0, -1.0, -1.5, -0.5), _gap(0.02, -0.3, -0.5, -0.1)],
+        _tex(-2.0, -3.0, -1.0))
+    assert shrinking["widening"] is False and shrinking["reading"] == "channel_i"
+
+    # ... and the mirrored NEGATIVE cases still read affirmatively (no over-correction)
+    assert ar._mechanism_reading(
+        [_gap(0.0, -1.0, -1.5, -0.5), _gap(0.02, -1.0, -1.5, -0.5)],
+        _tex(-0.1, -0.5, 0.3))["reading"] == "channel_i"
+    assert ar._mechanism_reading(
+        [_gap(0.0, -0.05, -0.2, +0.1), _gap(0.02, -1.0, -1.4, -0.6)],
+        _tex(-2.0, -3.0, -1.0))["reading"] == "channel_ii"
+
+
 def test_mechanism_t_ex_unmoved_kills_channel_ii():
     """Cost PnL pattern but T_ex CI covers 0 -> channel_ii rejected, falls to null."""
     r = ar._mechanism_reading(
