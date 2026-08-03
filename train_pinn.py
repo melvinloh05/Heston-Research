@@ -457,14 +457,24 @@ def train_model(cfg: PINNConfig, train_ds: ArmDataset, val_ds: ArmDataset,
     cuda_peak = cuda_max_memory_bytes(dev)
     if cuda_peak is not None:
         compute["cuda_max_memory_bytes"] = cuda_peak
+    # 'last' is always the final model. It is ALSO 'matched_epochs' only when the
+    # step budget was actually reached: with early_stop on (train.py's DEFAULT,
+    # `early_stop = not --matched-epochs`) the loop breaks at the patience step, and
+    # labelling that checkpoint matched_epochs would let the contract's
+    # compute_accounting.report_both table compare arms that stopped at different
+    # steps as though their budgets were matched (audit T2). The early-stop DEFAULT
+    # is deliberately unchanged — that is a run-book decision, not a code one.
+    last_ck = {"step": step, "path": "last.pt",
+               "val_total": (val_curve[-1]["val_total"] if val_curve else best["val"]),
+               "reached_max_steps": step >= tcfg.steps}
+    checkpoints = {
+        "best": {"step": best["step"], "val_total": best["val"], "path": "best.pt"},
+        "last": last_ck}
+    if last_ck["reached_max_steps"]:
+        checkpoints["matched_epochs"] = dict(last_ck)
     runlog = {
         "val_curve": val_curve,
-        "checkpoints": {
-            "best": {"step": best["step"], "val_total": best["val"], "path": "best.pt"},
-            "matched_epochs": {"step": step, "path": "last.pt",
-                               "val_total": (val_curve[-1]["val_total"] if val_curve
-                                             else best["val"]),
-                               "reached_max_steps": step >= tcfg.steps}},
+        "checkpoints": checkpoints,
         "compute": compute,
         "n_train_rows": train_ds.n_rows, "n_val_rows": val_ds.n_rows}
     return model, best["state"], last_state, runlog

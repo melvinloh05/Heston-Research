@@ -1,0 +1,87 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+___________ test_early_stopped_run_has_no_matched_epochs_checkpoint ____________
+
+npz = '/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/train_labels0/labels.npz'
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_early_stopped_run_has_no_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x13a573890>
+
+    def test_early_stopped_run_has_no_matched_epochs_checkpoint(npz, tmp_path, monkeypatch):
+        """T2: train.py defaults to early_stop = not --matched-epochs, so the DEFAULT
+        run early-stops. Filing that checkpoint under 'matched_epochs' would let the
+        contract's report_both table compare arms that stopped at different steps as
+        though they had a matched budget. last.pt is 'last'; 'matched_epochs' exists
+        only when the step budget was actually reached."""
+        counter = {"n": 0}
+    
+        def non_improving(model, val_batch):               # forces the early stop
+            counter["n"] += 1
+            return float(counter["n"]), {"total": float(counter["n"])}
+    
+        monkeypatch.setattr(tp, "_eval_val", non_improving)
+        # the contract cadence (val_every 500, patience 10) needs 5500 steps to trip;
+        # shrink ONLY the cadence, so the default early_stop path is what is tested
+        from dataclasses import replace
+        from_dict = tp.TrainConfig.from_dict
+        monkeypatch.setattr(tp.TrainConfig, "from_dict",
+                            staticmethod(lambda d: replace(from_dict(d), batch=128,
+                                                           n_pde=128, val_every=5,
+                                                           patience=1)))
+        out = tmp_path / "early"
+        runlog = train.main(["--arm", "rung3_delta_gamma_vega", "--seed", "5", "--data", npz,
+                             "--pinn-cfg", CFG, "--contract", CONTRACT,
+                             "--lambdas", str(tmp_path / "absent.yaml"),
+                             "--out", str(out), "--steps", "1000"])   # DEFAULT: early stop on
+        assert runlog["compute"]["stopped_early"]
+        ck = runlog["checkpoints"]
+>       assert "matched_epochs" not in ck, (
+            "an early-stopped checkpoint was filed as matched_epochs; the report_both "
+            "table would compare unequal budgets as if matched")
+E       AssertionError: an early-stopped checkpoint was filed as matched_epochs; the report_both table would compare unequal budgets as if matched
+E       assert 'matched_epochs' not in {'best': {'path': 'best.pt', 'step': 5, 'val_total': 1.0}, 'matched_epochs': {'path': 'last.pt', 'reached_max_steps': False, 'step': 10, 'val_total': 2.0}}
+
+test_train.py:257: AssertionError
+----------------------------- Captured stdout call -----------------------------
+wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_early_stopped_run_has_no_0/early/best.pt (best step 5), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_early_stopped_run_has_no_0/early/last.pt (matched_epochs step 10), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_early_stopped_run_has_no_0/early/runlog.json, /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_early_stopped_run_has_no_0/early/loss_curves.csv
+_____________ test_matched_epochs_checkpoint_exists_alongside_best _____________
+
+npz = '/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/train_labels0/labels.npz'
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_matched_epochs_checkpoint0')
+
+    def test_matched_epochs_checkpoint_exists_alongside_best(npz, tmp_path):
+        out = tmp_path / "run"
+        runlog = train.main(["--arm", "rung3_delta_gamma_vega", "--seed", "5", "--data", npz,
+                             "--pinn-cfg", CFG, "--contract", CONTRACT,
+                             "--lambdas", str(tmp_path / "absent.yaml"),
+                             "--out", str(out), "--steps", "30", "--matched-epochs"])
+        for f in ("best.pt", "last.pt", "runlog.json", "loss_curves.csv"):
+            assert (out / f).exists(), f
+        ck = runlog["checkpoints"]
+>       assert set(ck) == {"best", "last", "matched_epochs"}         # runlog has BOTH
+E       AssertionError: assert {'best', 'matched_epochs'} == {'best', 'las...tched_epochs'}
+E         Extra items in the right set:
+E         'last'
+E         Use -v to get more diff
+
+test_train.py:275: AssertionError
+----------------------------- Captured stdout call -----------------------------
+wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_matched_epochs_checkpoint0/run/best.pt (best step 30), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_matched_epochs_checkpoint0/run/last.pt (matched_epochs step 30), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_matched_epochs_checkpoint0/run/runlog.json, /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_matched_epochs_checkpoint0/run/loss_curves.csv
+=============================== warnings summary ===============================
+test_train.py::test_early_stopped_run_has_no_matched_epochs_checkpoint
+  /Users/melvin/Documents/Heston Research/train.py:273: RuntimeWarning: lambdas file /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_early_stopped_run_has_no_0/absent.yaml not found; using pinn-config defaults (lambda_pde/gamma/vega unchanged)
+    warnings.warn(f"lambdas file {args.lambdas} not found; using pinn-config defaults "
+
+test_train.py::test_early_stopped_run_has_no_matched_epochs_checkpoint
+test_train.py::test_matched_epochs_checkpoint_exists_alongside_best
+  /Users/melvin/Documents/Heston Research/train_pinn.py:285: RuntimeWarning: labels artifact has no 'split' key; falling back to an 80/20 by-parameter-point split with rng [seed, 21]
+    warnings.warn(
+
+test_train.py::test_matched_epochs_checkpoint_exists_alongside_best
+  /Users/melvin/Documents/Heston Research/train.py:273: RuntimeWarning: lambdas file /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-37/test_matched_epochs_checkpoint0/absent.yaml not found; using pinn-config defaults (lambda_pde/gamma/vega unchanged)
+    warnings.warn(f"lambdas file {args.lambdas} not found; using pinn-config defaults "
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test_train.py::test_early_stopped_run_has_no_matched_epochs_checkpoint
+FAILED test_train.py::test_matched_epochs_checkpoint_exists_alongside_best - ...
+2 failed, 13 deselected, 4 warnings in 2.75s

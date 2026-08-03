@@ -226,6 +226,43 @@ def test_early_stop_before_max_steps_best_is_best_val(npz, monkeypatch):
     assert log["checkpoints"]["best"]["step"] == 5               # first val was the best
 
 
+def test_early_stopped_run_has_no_matched_epochs_checkpoint(npz, tmp_path, monkeypatch):
+    """T2: train.py defaults to early_stop = not --matched-epochs, so the DEFAULT
+    run early-stops. Filing that checkpoint under 'matched_epochs' would let the
+    contract's report_both table compare arms that stopped at different steps as
+    though they had a matched budget. last.pt is 'last'; 'matched_epochs' exists
+    only when the step budget was actually reached."""
+    counter = {"n": 0}
+
+    def non_improving(model, val_batch):               # forces the early stop
+        counter["n"] += 1
+        return float(counter["n"]), {"total": float(counter["n"])}
+
+    monkeypatch.setattr(tp, "_eval_val", non_improving)
+    # the contract cadence (val_every 500, patience 10) needs 5500 steps to trip;
+    # shrink ONLY the cadence, so the default early_stop path is what is tested
+    from dataclasses import replace
+    from_dict = tp.TrainConfig.from_dict
+    monkeypatch.setattr(tp.TrainConfig, "from_dict",
+                        staticmethod(lambda d: replace(from_dict(d), batch=128,
+                                                       n_pde=128, val_every=5,
+                                                       patience=1)))
+    out = tmp_path / "early"
+    runlog = train.main(["--arm", "rung3_delta_gamma_vega", "--seed", "5", "--data", npz,
+                         "--pinn-cfg", CFG, "--contract", CONTRACT,
+                         "--lambdas", str(tmp_path / "absent.yaml"),
+                         "--out", str(out), "--steps", "1000"])   # DEFAULT: early stop on
+    assert runlog["compute"]["stopped_early"]
+    ck = runlog["checkpoints"]
+    assert "matched_epochs" not in ck, (
+        "an early-stopped checkpoint was filed as matched_epochs; the report_both "
+        "table would compare unequal budgets as if matched")
+    assert ck["last"]["path"] == "last.pt"
+    assert ck["last"]["reached_max_steps"] is False
+    assert (out / "last.pt").exists()                  # the FILE is still written
+    assert runlog["matched_epochs_mode"] is False
+
+
 def test_matched_epochs_checkpoint_exists_alongside_best(npz, tmp_path):
     out = tmp_path / "run"
     runlog = train.main(["--arm", "rung3_delta_gamma_vega", "--seed", "5", "--data", npz,
@@ -235,9 +272,12 @@ def test_matched_epochs_checkpoint_exists_alongside_best(npz, tmp_path):
     for f in ("best.pt", "last.pt", "runlog.json", "loss_curves.csv"):
         assert (out / f).exists(), f
     ck = runlog["checkpoints"]
-    assert set(ck) == {"best", "matched_epochs"}                 # runlog has BOTH
+    assert set(ck) == {"best", "last", "matched_epochs"}         # runlog has BOTH
     assert ck["matched_epochs"]["path"] == "last.pt"
     assert ck["matched_epochs"]["step"] == 30 and ck["matched_epochs"]["reached_max_steps"]
+    # T2: 'matched_epochs' is the SAME checkpoint as 'last', present only because
+    # the step budget was reached — not a second file.
+    assert ck["last"] == ck["matched_epochs"]
     # best.pt carries cfg + frozen scales for reload
     saved = torch.load(out / "best.pt", weights_only=False)
     assert saved["config_hash"] == runlog["config_hash"]

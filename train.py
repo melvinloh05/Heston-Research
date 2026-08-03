@@ -320,8 +320,11 @@ def main(argv=None) -> dict:
     _write_loss_curve_csv(out / "loss_curves.csv", runlog["val_curve"])
     (out / "runlog.json").write_text(json.dumps(runlog, indent=2, default=str))
     ck = runlog["checkpoints"]
+    # 'matched_epochs' is present only when the step budget was reached (audit T2);
+    # say which of the two this last.pt actually is.
+    last_label = "matched_epochs" if "matched_epochs" in ck else "last, EARLY-STOPPED"
     print(f"wrote {out/'best.pt'} (best step {ck['best']['step']}), "
-          f"{out/'last.pt'} (matched_epochs step {ck['matched_epochs']['step']}), "
+          f"{out/'last.pt'} ({last_label} step {ck['last']['step']}), "
           f"{out/'runlog.json'}, {out/'loss_curves.csv'}")
     return runlog
 

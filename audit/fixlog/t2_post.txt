@@ -1,0 +1,17 @@
+..                                                                       [100%]
+=============================== warnings summary ===============================
+test_train.py::test_early_stopped_run_has_no_matched_epochs_checkpoint
+  /Users/melvin/Documents/Heston Research/train.py:273: RuntimeWarning: lambdas file /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-38/test_early_stopped_run_has_no_0/absent.yaml not found; using pinn-config defaults (lambda_pde/gamma/vega unchanged)
+    warnings.warn(f"lambdas file {args.lambdas} not found; using pinn-config defaults "
+
+test_train.py::test_early_stopped_run_has_no_matched_epochs_checkpoint
+test_train.py::test_matched_epochs_checkpoint_exists_alongside_best
+  /Users/melvin/Documents/Heston Research/train_pinn.py:285: RuntimeWarning: labels artifact has no 'split' key; falling back to an 80/20 by-parameter-point split with rng [seed, 21]
+    warnings.warn(
+
+test_train.py::test_matched_epochs_checkpoint_exists_alongside_best
+  /Users/melvin/Documents/Heston Research/train.py:273: RuntimeWarning: lambdas file /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-38/test_matched_epochs_checkpoint0/absent.yaml not found; using pinn-config defaults (lambda_pde/gamma/vega unchanged)
+    warnings.warn(f"lambdas file {args.lambdas} not found; using pinn-config defaults "
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2 passed, 13 deselected, 4 warnings in 2.32s
