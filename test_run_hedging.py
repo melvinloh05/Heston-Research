@@ -201,6 +201,31 @@ def test_confirmatory_persists_pnl_for_every_cell_tc_method(confirmatory_run):
                 assert f"{m}__tc{tc}" in keys, (os.path.basename(f), m, tc)
 
 
+def test_resolved_config_describes_the_program_not_the_last_cell(confirmatory_run):
+    """R1: the engine writes resolved_config.yaml into the shared run root on
+    EVERY (cell, seed) call, and _run_program calls it with a TRIMMED config —
+    one direction, one magnitude, one seed. What survived was the last cell's
+    trim, so the provenance record of a 2-magnitude, 10-seed confirmatory run
+    claimed to be a single-seed, single-magnitude run. Nothing numerical moves;
+    for a pre-registered study the provenance record is load-bearing."""
+    import yaml
+
+    res, out = confirmatory_run
+    path = os.path.join(res["run_root"], "resolved_config.yaml")
+    assert os.path.exists(path)
+    cfg = yaml.safe_load(open(path))
+
+    assert cfg["derived"]["seeds"] == CONFIRMATORY_SEEDS          # all 10, not the last
+    assert cfg["engine"]["misspecification"]["magnitudes"] == [0.0, 1.0]
+    # the program's own trim IS still recorded (combined only, no cross-model)
+    mis = cfg["benchmark"]["hedging_simulation"]["misspecification"]
+    assert list(mis["perturbations"]) == ["combined"]
+    assert mis["cross_model"] == []
+    # and it round-trips into the same cell set the run actually executed
+    n_cells = sum(1 for _ in hb._iter_sim_cells(cfg))
+    assert n_cells == res["n_ran"] + res["n_skipped"] == 20
+
+
 def test_ledger_resume_skips_completed_cells(confirmatory_run, ckpt_root):
     _res, out = confirmatory_run                   # first run already completed
     # re-run against the SAME out_dir: every (cell, seed) is in the ledger -> skipped

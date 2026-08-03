@@ -1,0 +1,42 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_resolved_config_describes_the_program_not_the_last_cell _________
+
+confirmatory_run = ({'ledger': '/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-40/confirm_out0/confirma..._delta_only', ...}, '/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-40/confirm_out0')
+
+    def test_resolved_config_describes_the_program_not_the_last_cell(confirmatory_run):
+        """R1: the engine writes resolved_config.yaml into the shared run root on
+        EVERY (cell, seed) call, and _run_program calls it with a TRIMMED config —
+        one direction, one magnitude, one seed. What survived was the last cell's
+        trim, so the provenance record of a 2-magnitude, 10-seed confirmatory run
+        claimed to be a single-seed, single-magnitude run. Nothing numerical moves;
+        for a pre-registered study the provenance record is load-bearing."""
+        import yaml
+    
+        res, out = confirmatory_run
+        path = os.path.join(res["run_root"], "resolved_config.yaml")
+        assert os.path.exists(path)
+        cfg = yaml.safe_load(open(path))
+    
+>       assert cfg["derived"]["seeds"] == CONFIRMATORY_SEEDS          # all 10, not the last
+E       assert [51] == [42, 43, 44, 45, 46, 47, ...]
+E         At index 0 diff: 51 != 42
+E         Right contains 9 more items, first extra item: 43
+E         Use -v to get more diff
+
+test_run_hedging.py:218: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-40/src_ckpt0/best.pt (best step 8), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-40/src_ckpt0/last.pt (matched_epochs step 8), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-40/src_ckpt0/runlog.json, /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-40/src_ckpt0/loss_curves.csv
+=============================== warnings summary ===============================
+test_run_hedging.py::test_resolved_config_describes_the_program_not_the_last_cell
+  /Users/melvin/Documents/Heston Research/train.py:273: RuntimeWarning: lambdas file /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-40/src_ckpt0/absent.yaml not found; using pinn-config defaults (lambda_pde/gamma/vega unchanged)
+    warnings.warn(f"lambdas file {args.lambdas} not found; using pinn-config defaults "
+
+test_run_hedging.py::test_resolved_config_describes_the_program_not_the_last_cell
+  /Users/melvin/Documents/Heston Research/train_pinn.py:285: RuntimeWarning: labels artifact has no 'split' key; falling back to an 80/20 by-parameter-point split with rng [seed, 21]
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test_run_hedging.py::test_resolved_config_describes_the_program_not_the_last_cell
+1 failed, 11 deselected, 2 warnings in 3.31s

@@ -1,0 +1,12 @@
+............                                                             [100%]
+=============================== warnings summary ===============================
+test_run_hedging.py::test_confirmatory_uses_exactly_10_seeds
+  /Users/melvin/Documents/Heston Research/train.py:273: RuntimeWarning: lambdas file /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-41/src_ckpt0/absent.yaml not found; using pinn-config defaults (lambda_pde/gamma/vega unchanged)
+    warnings.warn(f"lambdas file {args.lambdas} not found; using pinn-config defaults "
+
+test_run_hedging.py::test_confirmatory_uses_exactly_10_seeds
+  /Users/melvin/Documents/Heston Research/train_pinn.py:285: RuntimeWarning: labels artifact has no 'split' key; falling back to an 80/20 by-parameter-point split with rng [seed, 21]
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+12 passed, 2 warnings in 5.13s

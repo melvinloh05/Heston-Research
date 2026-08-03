@@ -202,6 +202,13 @@ def _run_program(prog: dict, ckpt_root, run_root: str, arms: list[str],
         done.add((slug, seed))
         ran.append((slug, seed))
 
+    # PROVENANCE (audit R1): the engine writes resolved_config.yaml into this
+    # shared run_root on every per-cell call, each with a TRIMMED config (one
+    # direction, one magnitude, one seed), so what survived the loop described
+    # the LAST CELL rather than the run. Re-write it from the untrimmed program
+    # so the surviving copy is the one a reproduction attempt needs.
+    hb.log_resolved_config(prog, run_root)
+
     master = _read_rows_typed(master_path)
     if master:
         gap_floor = float(prog["engine"]["risk"].get("gap_floor_frac", 0.01))
