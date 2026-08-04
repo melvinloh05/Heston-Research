@@ -203,6 +203,58 @@ def test_clipped_fraction_reaches_the_summary_and_report():
     assert "clipped" in text
 
 
+def test_sigma_ladder_comes_from_the_contract():
+    """AM2-3a: the swept ladder is `oracle_headroom_gate.sigma_rel_ladder`, not a
+    Python literal. The module must carry NO default tuple, and the resolver must
+    return the contract's decision + diagnostic rungs with their eligibility."""
+    assert not hasattr(gh, "_SIGMA_REL_DEFAULT"), (
+        "the sigma ladder is a contract key (AM2-3a); no Python literal may "
+        "shadow it")
+    lad = _BM["oracle_headroom_gate"]["sigma_rel_ladder"]
+    entries, source = gh._resolve_ladder(_CFG, None, None)
+    assert source == "contract"
+    assert [sr for sr, elig in entries if elig] == [float(x) for x in lad["decision"]]
+    assert [sr for sr, elig in entries if not elig] == [float(x) for x in lad["diagnostic"]]
+    # the deleted rung really is gone from what a default invocation executes
+    assert 0.8 not in [sr for sr, _ in entries]
+
+
+def test_diagnostic_rung_cannot_fire_the_decision_scan():
+    """AM2-3a's whole point: a rung the contract declares DIAGNOSTIC must never be
+    selected by the DECISION scan, even when it clears the spread threshold and
+    every seed's CI excludes 0 — which the huge-sigma rung below does.
+
+    The ladder is trimmed IN MEMORY (the contract file is untouched) exactly as
+    _trim_to_combined_cell trims the sweep geometry."""
+    cfg = _cfg(n_paths=96, freq=252)
+    cfg["benchmark"]["oracle_headroom_gate"]["sigma_rel_ladder"] = {
+        "decision": [0.05], "diagnostic": [0.8]}
+    out = tempfile.mkdtemp()
+    res = gh.run_gate(cfg, mode="field", out_dir=out, n_cloud_states=400,
+                      n_cloud_paths=96, spread_threshold_rel=-1e9)
+
+    # the executed ladder IS the contract's (0.2/0.4 of the old literal are absent)
+    assert {s["arm"] for s in res["summary"]} == {"s0.05", "s0.8"}
+    assert res["ladder"] == {"decision": (0.05,), "diagnostic": (0.8,),
+                             "source": "contract"}
+
+    diag = [s for s in res["summary"] if s["arm"] == "s0.8"]
+    assert diag and all(s["decision_eligible"] is False for s in diag)
+    assert all(s["rung_role"] == "diagnostic" for s in diag)
+    for s in diag:                      # it WOULD have fired the scan's predicate
+        assert (s["spread_rel_mean"] >= res["spread_threshold_rel"]
+                and s["ci_excludes_zero_frac"] == 1.0)
+    for tc, hit in res["decision"].items():
+        assert hit is None or hit["arm"] != "s0.8", (
+            f"tc={tc}: a DIAGNOSTIC rung fired the decision scan")
+
+    # ... and the label is visible where a human reads it
+    csv_text = Path(res["csv_path"]).read_text()
+    assert "rung_role" in csv_text.splitlines()[0] and "diagnostic" in csv_text
+    report = Path(res["report_path"]).read_text()
+    assert "DIAGNOSTIC" in report and "0.8" in report
+
+
 if __name__ == "__main__":
     for fn in sorted(k for k in dir() if k.startswith("test_")):
         globals()[fn]()

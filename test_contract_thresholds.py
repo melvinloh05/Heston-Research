@@ -57,6 +57,12 @@ _EXPECTED = [
     ("sakuma_null_rel_tol", _AT["sakuma_null_rel_tol"]),
     ("dose_bootstrap_tail_prob_max", _AT["dose_response"]["bootstrap_tail_prob_max"]),
     ("gate_spread_threshold_rel", BM["oracle_headroom_gate"]["spread_threshold_rel"]),
+    ("gate_sigma_rel_decision",
+     tuple(float(x) for x in
+           BM["oracle_headroom_gate"]["sigma_rel_ladder"]["decision"])),
+    ("gate_sigma_rel_diagnostic",
+     tuple(float(x) for x in
+           BM["oracle_headroom_gate"]["sigma_rel_ladder"]["diagnostic"])),
     ("moneyness_wing_bounds",
      tuple(float(x) for x in BM["splits"]["moneyness_wing_holdout"]["moneyness_bounds"])),
     ("plateau_tol", BM["information_matching"]["plateau_tol"]),

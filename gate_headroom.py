@@ -51,6 +51,13 @@ SPEC BUG-FIX (documented deviation from the literal task spec, evidence-based):
   only makes the field a faithful gamma-error surrogate and the iid arm a fair
   contrast.
 
+SIGMA LADDER (contract `oracle_headroom_gate.sigma_rel_ladder`, AM2-3a): the
+swept ladder is the CONTRACT's, never a module literal — `decision` rungs are
+the only ones the DECISION scan may fire on, `diagnostic` rungs are swept,
+written and plotted but excluded from that scan (at ~78% clipped they sit
+outside `region_of_validity` and their spread is not a reading of a gamma error
+of the labelled size).
+
 FULL-SIZE GATE IS HUMAN-LAUNCHED (after the pilot; never run from tests):
     python gate_headroom.py --mode field --out-dir results/gate
     python gate_headroom.py --mode iid   --out-dir results/gate_iid
@@ -62,6 +69,7 @@ from __future__ import annotations
 
 import copy
 import os
+import warnings
 
 import numpy as np
 
@@ -79,7 +87,11 @@ _N_FEATURES = 256           # Kf random Fourier features
 # (a gamma error). See the module docstring SPEC BUG-FIX note.
 _BANDWIDTH = (1.0, 0.1, 0.1)
 _DELTA_CLIP = (-0.05, 1.05)
-_SIGMA_REL_DEFAULT = (0.1, 0.2, 0.4, 0.8)
+# NO _SIGMA_REL_DEFAULT: the ladder is the CONTRACT's
+# (oracle_headroom_gate.sigma_rel_ladder, amendment AM2-3a) and is resolved by
+# _resolve_ladder. The old literal (0.1, 0.2, 0.4, 0.8) swept a rung — 0.8 —
+# that the amendment DELETED and treated 0.4 as a decision rung, which the
+# amendment demoted to diagnostic-only.
 
 # audit G2: what a non-zero clipped_frac means, stated once and reused by the
 # report and the run_gate result so a reader cannot meet the number without it.
@@ -281,16 +293,68 @@ class NoisyOracleProvider:
         return out
 
 # ---------------------------------------------------------------------------
+# sigma ladder (contract AM2-3a) — decision rungs vs labelled diagnostic rungs
+# ---------------------------------------------------------------------------
+
+
+def _resolve_ladder(cfg: dict, sigma_rel_list, sigma_rel_diagnostic
+                    ) -> tuple[list, str]:
+    """[(sigma_rel, decision_eligible), ...] in ascending sigma, plus the source.
+
+    `sigma_rel_list is None` (the DEFAULT, and what the CLI passes unless a human
+    overrides it) => the CONTRACT ladder: `oracle_headroom_gate.sigma_rel_ladder`
+    `decision` rungs are decision-eligible, `diagnostic` rungs are swept, reported
+    and plotted but NEVER an input to the DECISION scan (amendment AM2-3a: 0.40 is
+    ~78% clipped, outside `region_of_validity`, and 0.80 is dropped entirely).
+
+    An explicit `sigma_rel_list` is an OPERATOR OVERRIDE and has left the contract
+    ladder: those rungs are decision-eligible and `sigma_rel_diagnostic` (default
+    empty) carries any the caller wants labelled diagnostic. Passing a rung the
+    CONTRACT calls diagnostic warns loudly rather than silently re-promoting it.
+    A rung named in BOTH lists is diagnostic (the conservative reading).
+    """
+    th = hb.contract_thresholds(cfg)
+    if sigma_rel_list is None:
+        decision = tuple(th["gate_sigma_rel_decision"])
+        diagnostic = tuple(th["gate_sigma_rel_diagnostic"]
+                           if sigma_rel_diagnostic is None
+                           else (float(s) for s in sigma_rel_diagnostic))
+        source = "contract"
+    else:
+        decision = tuple(float(s) for s in sigma_rel_list)
+        diagnostic = tuple(float(s) for s in (sigma_rel_diagnostic or ()))
+        source = "override"
+        contract_diag = th["gate_sigma_rel_diagnostic"]
+        strays = [s for s in decision
+                  if any(abs(s - d) <= 1e-12 for d in contract_diag)]
+        if strays:
+            warnings.warn(
+                f"gate ladder OVERRIDE: {strays} are declared DIAGNOSTIC-ONLY by "
+                f"oracle_headroom_gate.sigma_rel_ladder.diagnostic but were passed "
+                f"as swept decision rungs; the DECISION scan may fire on a rung the "
+                f"contract demoted. Pass them via sigma_rel_diagnostic instead.",
+                RuntimeWarning)
+    eligible: dict[float, bool] = {}
+    for sr in decision:
+        eligible[float(sr)] = True
+    for sr in diagnostic:
+        eligible[float(sr)] = False                 # diagnostic wins a collision
+    entries = sorted(eligible.items())
+    return entries, source
+
+
+# ---------------------------------------------------------------------------
 # gate driver
 # ---------------------------------------------------------------------------
 
 
-def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
+def run_gate(cfg: dict, sigma_rel_list: tuple | None = None,
              seed_list: list | None = None, mode: str = "field",
              out_dir: str = "results/gate",
              sigma_gamma_abs: float | None = None,
              n_cloud_states: int = 2000, n_cloud_paths: int = 256,
-             spread_threshold_rel: float | None = None) -> dict:
+             spread_threshold_rel: float | None = None,
+             sigma_rel_diagnostic: tuple | None = None) -> dict:
     """Run the oracle-headroom gate on the confirmatory cell and write
     headroom.csv + headroom_report.md into `out_dir`.
 
@@ -300,9 +364,16 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
         resolve_config output; deep-copied, then trimmed in memory to the
         confirmatory geometry (combined perturbation, magnitude 1.0, baseline
         train regime, T' = 0.17, daily grid; n_paths/seeds as configured).
-    sigma_rel_list : tuple of float
+    sigma_rel_list : tuple of float, optional
         Relative sigma ladder; sigma_gamma_target = sigma_rel *
         rms(Gamma_oracle) with the rms measured on the reference state cloud.
+        DEFAULT (None) = the CONTRACT ladder `oracle_headroom_gate.
+        sigma_rel_ladder.decision` + `.diagnostic` (AM2-3a) — never a Python
+        literal. Passing a list is an operator override (see _resolve_ladder).
+    sigma_rel_diagnostic : tuple of float, optional
+        Rungs swept and reported but NEVER an input to the DECISION scan.
+        Defaults to the contract's `.diagnostic` rungs when the ladder itself
+        is the contract's, else empty.
     seed_list : list of int, optional
         Overrides cfg["derived"]["seeds"] (CLI --n-seeds).
     mode : {"field", "iid"}
@@ -318,10 +389,12 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
     Returns
     -------
     dict with keys records (per sigma/tc/seed), summary (per sigma/tc),
-    decision (per tc), spread_threshold_rel, rms_gamma, csv_path, report_path,
-    rows (engine rows).
+    decision (per tc), ladder ({decision, diagnostic, source}),
+    spread_threshold_rel, rms_gamma, csv_path, report_path, rows (engine rows).
     """
     cfg = _trim_to_combined_cell(copy.deepcopy(cfg))
+    entries, ladder_source = _resolve_ladder(cfg, sigma_rel_list,
+                                             sigma_rel_diagnostic)
     if spread_threshold_rel is None:
         spread_threshold_rel = hb.contract_thresholds(cfg)["gate_spread_threshold_rel"]
     spread_threshold_rel = float(spread_threshold_rel)
@@ -342,15 +415,24 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
     ranges = _grid_ranges(cfg)
     gate_seed = int(bm["meta"]["global_seed"])   # ONE frozen field per gate
 
+    # arms carry decision eligibility from here on: a DIAGNOSTIC rung is swept,
+    # written and plotted exactly like a decision rung and is excluded ONLY from
+    # the decision scan (AM2-3a).
     if sigma_gamma_abs is not None:
-        arms = [("pilot", float(sigma_gamma_abs) / rms, float(sigma_gamma_abs))]
+        arms = [("pilot", float(sigma_gamma_abs) / rms, float(sigma_gamma_abs),
+                 True)]
+        ladder = {"decision": (float(sigma_gamma_abs) / rms,),
+                  "diagnostic": (), "source": "pilot"}
     else:
-        arms = sorted(((f"s{sr:g}", float(sr), float(sr) * rms)
-                       for sr in sigma_rel_list), key=lambda a: a[1])
+        arms = [(f"s{sr:g}", float(sr), float(sr) * rms, bool(elig))
+                for sr, elig in entries]
+        ladder = {"decision": tuple(sr for sr, e in entries if e),
+                  "diagnostic": tuple(sr for sr, e in entries if not e),
+                  "source": ladder_source}
     oracle_name = eng.get("oracle_provider_name", "oracle")
     providers = {oracle_name: base}
     noisy_by_arm: dict[str, NoisyOracleProvider] = {}
-    for label, _sr, sa in arms:
+    for label, _sr, sa, _elig in arms:
         noisy_by_arm[label] = NoisyOracleProvider(
             base, sa, gate_seed, ranges, ref, mode=mode)
         providers[f"noisy_{label}"] = noisy_by_arm[label]
@@ -362,7 +444,7 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
     tiers = list(hs["transaction_costs"]["tiers"])
     seeds = cfg["derived"]["seeds"]
     records = []
-    for label, sr, sa in arms:
+    for label, sr, sa, elig in arms:
         for tc in tiers:
             for seed in seeds:
                 ro = by[(oracle_name, tc, seed)]
@@ -371,7 +453,10 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
                 ci_lo = float(rn["pnl_vs_oracle_ci_lo"])
                 records.append({
                     "mode": mode, "arm": label, "sigma_rel": sr,
-                    "sigma_gamma_abs": sa, "tc": tc, "seed": seed,
+                    "sigma_gamma_abs": sa,
+                    "rung_role": "decision" if elig else "diagnostic",
+                    "decision_eligible": bool(elig),
+                    "tc": tc, "seed": seed,
                     "cvar_oracle": co, "cvar_noisy": cn,
                     "spread_rel": ((cn - co) / co if co != 0.0
                                    else float("nan")),
@@ -382,14 +467,17 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
                     "t_ex": float(rn["t_ex"]),
                     "n_paths": int(rn["n_paths"])})
     summary = []
-    for label, sr, sa in arms:
+    for label, sr, sa, elig in arms:
         for tc in tiers:
             grp = [rec for rec in records
                    if rec["arm"] == label and rec["tc"] == tc]
             sp = np.array([g["spread_rel"] for g in grp], float)
             summary.append({
                 "mode": mode, "arm": label, "sigma_rel": sr,
-                "sigma_gamma_abs": sa, "tc": tc, "n_seeds": len(grp),
+                "sigma_gamma_abs": sa,
+                "rung_role": "decision" if elig else "diagnostic",
+                "decision_eligible": bool(elig),
+                "tc": tc, "n_seeds": len(grp),
                 "spread_rel_mean": float(np.mean(sp)),
                 "spread_rel_seed_std": (float(np.std(sp, ddof=1))
                                         if len(grp) > 1 else 0.0),
@@ -400,13 +488,15 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
                 # are built once per method and reused across tiers, so there is
                 # no per-tc clipping to report (audit G2).
                 "clipped_frac": noisy_by_arm[label].clipped_fraction})
-    # smallest sigma_rel whose mean spread clears the pre-registered relative
-    # threshold (contract oracle_headroom_gate.spread_threshold_rel) WITH every
-    # seed's paired CI excluding 0
+    # smallest DECISION-ELIGIBLE sigma_rel whose mean spread clears the
+    # pre-registered relative threshold (contract
+    # oracle_headroom_gate.spread_threshold_rel) WITH every seed's paired CI
+    # excluding 0. Diagnostic rungs are skipped HERE, not upstream: they are
+    # still swept, written and plotted (AM2-3a).
     decision = {}
     for tc in tiers:
         decision[tc] = next(
-            (s for s in summary if s["tc"] == tc
+            (s for s in summary if s["tc"] == tc and s["decision_eligible"]
              and s["spread_rel_mean"] >= spread_threshold_rel
              and s["ci_excludes_zero_frac"] == 1.0), None)
 
@@ -414,8 +504,9 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
     csv_path = hb.write_rows_csv(records, os.path.join(out_dir, "headroom.csv"))
     report_path = _write_report(
         os.path.join(out_dir, "headroom_report.md"), cfg, mode, rms, arms,
-        tiers, seeds, summary, decision, spread_threshold_rel)
+        tiers, seeds, summary, decision, spread_threshold_rel, ladder)
     return {"records": records, "summary": summary, "decision": decision,
+            "ladder": ladder,
             "spread_threshold_rel": spread_threshold_rel,
             "rms_gamma": rms, "csv_path": csv_path,
             "report_path": report_path, "rows": rows,
@@ -426,7 +517,8 @@ def run_gate(cfg: dict, sigma_rel_list: tuple = _SIGMA_REL_DEFAULT,
 
 def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
                   tiers: list, seeds: list, summary: list,
-                  decision: dict, spread_threshold_rel: float) -> str:
+                  decision: dict, spread_threshold_rel: float,
+                  ladder: dict) -> str:
     """headroom_report.md: run header, per-(sigma, tc) seed-mean table, and
     the DECISION section (explicitly a HUMAN go/no-go)."""
     eng = cfg["engine"]
@@ -449,18 +541,28 @@ def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
         f" n_paths = {eng['simulation']['n_paths']}, seeds = {list(seeds)}",
         f"- rms(Gamma_oracle) on the reference cloud: **{rms:.6g}**",
         "- absolute sigma_gamma targets: "
-        + ", ".join(f"{label}: {sa:.6g}" for label, _sr, sa in arms),
+        + ", ".join(f"{label}: {sa:.6g}" for label, _sr, sa, _e in arms),
+        f"- sigma ladder ({ladder['source']}, contract "
+        "`oracle_headroom_gate.sigma_rel_ladder`): decision rungs "
+        + (", ".join(f"{x:g}" for x in ladder["decision"]) or "none")
+        + "; DIAGNOSTIC-ONLY rungs "
+        + (", ".join(f"{x:g}" for x in ladder["diagnostic"]) or "none")
+        + " — swept, reported and plotted, NEVER an input to the DECISION scan"
+        + ("" if ladder["source"] == "contract" else
+           "  **(LADDER OVERRIDDEN on the command line — this is NOT the "
+           "contract ladder)**"),
         "",
         "## Spread over seeds (spread_rel = (cvar_noisy - cvar_oracle) / "
         "cvar_oracle)",
         "",
-        "| arm | sigma_rel | sigma_gamma | tc | spread_rel mean | seed std |"
-        " CI-excl-0 frac | t_ex mean | clipped_frac |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| arm | role | sigma_rel | sigma_gamma | tc | spread_rel mean |"
+        " seed std | CI-excl-0 frac | t_ex mean | clipped_frac |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for s in summary:
+        role = s["rung_role"].upper() if not s["decision_eligible"] else "decision"
         lines.append(
-            f"| {s['arm']} | {s['sigma_rel']:.4g} | "
+            f"| {s['arm']} | {role} | {s['sigma_rel']:.4g} | "
             f"{s['sigma_gamma_abs']:.4g} | {s['tc']} | "
             f"{s['spread_rel_mean']:+.4f} | {s['spread_rel_seed_std']:.4f} | "
             f"{s['ci_excludes_zero_frac']:.2f} | {s['t_ex_mean']:.4f} | "
@@ -470,10 +572,15 @@ def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
         "",
         "## DECISION (per tc tier)",
         "",
-        f"Smallest sigma_rel with mean spread_rel >= {spread_threshold_rel} (the",
+        f"Smallest DECISION-ELIGIBLE sigma_rel with mean spread_rel >= "
+        f"{spread_threshold_rel} (the",
         "pre-registered relative CVaR95 threshold, contract",
         "`oracle_headroom_gate.spread_threshold_rel`) AND the paired per-path",
-        "bootstrap 95% CI excluding 0 in every seed:",
+        "bootstrap 95% CI excluding 0 in every seed. DIAGNOSTIC rungs ("
+        + (", ".join(f"{x:g}" for x in ladder["diagnostic"]) or "none")
+        + ") are EXCLUDED from this scan by the contract, however large their",
+        "spread: above `region_of_validity.clipped_frac_max` the spread is no",
+        "longer a monotone reading of a gamma error of the labelled size.",
         "",
     ]
     for tc in tiers:
@@ -548,9 +655,16 @@ def main(argv: list | None = None) -> None:
     ap.add_argument("--mode", choices=("field", "iid"), default="field",
                     help="corruption model (field = primary, iid = "
                          "contrast-only strawman)")
-    ap.add_argument("--sigma-rel", type=float, nargs="+",
-                    default=list(_SIGMA_REL_DEFAULT),
-                    help="pre-pilot relative sigma sweep")
+    ap.add_argument("--sigma-rel", type=float, nargs="+", default=None,
+                    help="OVERRIDE the pre-pilot relative sigma sweep; the "
+                         "default is the CONTRACT ladder "
+                         "(oracle_headroom_gate.sigma_rel_ladder.decision + "
+                         ".diagnostic, AM2-3a)")
+    ap.add_argument("--sigma-rel-diagnostic", type=float, nargs="+",
+                    default=None,
+                    help="rungs swept and reported but NEVER an input to the "
+                         "DECISION scan (only meaningful with --sigma-rel; the "
+                         "contract ladder brings its own)")
     ap.add_argument("--sigma-gamma", type=float, default=None,
                     help="ABSOLUTE pilot-calibrated sigma_gamma; replaces the "
                          "sweep with the single pilot point")
@@ -577,10 +691,19 @@ def main(argv: list | None = None) -> None:
         cfg["engine"]["simulation"]["n_paths"] = int(args.n_paths)
     seed_list = (cfg["derived"]["seeds"][:args.n_seeds]
                  if args.n_seeds is not None else None)
-    res = run_gate(cfg, sigma_rel_list=tuple(args.sigma_rel),
+    res = run_gate(cfg,
+                   sigma_rel_list=(None if args.sigma_rel is None
+                                   else tuple(args.sigma_rel)),
+                   sigma_rel_diagnostic=(None if args.sigma_rel_diagnostic is None
+                                         else tuple(args.sigma_rel_diagnostic)),
                    seed_list=seed_list, mode=args.mode, out_dir=args.out_dir,
                    sigma_gamma_abs=sigma_gamma_abs)
     print(f"rms(Gamma_oracle) = {res['rms_gamma']:.6g}")
+    lad = res.get("ladder")
+    if lad:
+        print(f"sigma ladder ({lad['source']}): decision="
+              f"{list(lad['decision'])}, diagnostic="
+              f"{list(lad['diagnostic'])} (never a decision input)")
     print(f"wrote {res['csv_path']}")
     print(f"wrote {res['report_path']}")
 

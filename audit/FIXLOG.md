@@ -735,3 +735,76 @@ code one, and there is no actual leakage.
   unchanged and were EXTENDED, not weakened. No other pre-existing test was touched; none
   failed.
 - `audit/FIXLOG.md` appended, not replaced. ✅
+
+---
+---
+
+# FIXLOG — audit fix batch 3 (close the contract/code divergences before the freeze)
+
+Branch `fix/audit-batch-3` off `contract/v6-amendment-2`. Baseline before the batch:
+**240 passed**.
+
+Contract amendment #2 (`audit/contract_amendment_2_notes.md`) declared keys no `.py` file
+read — its own §5 names the live divergence and recommends withholding the freeze tag until
+it closes. This batch closes it: the gate ladder, both effective-sigma quantities, the
+region-of-validity consequence, the confirmatory 10%, the `null`-means-two-things collision,
+the pre-flight cap check, and the two addendum scope calls.
+
+Per item: diff summary, test name, captured pre-fix failure, captured post-fix pass,
+full-suite count after the commit. Raw captures are in `audit/fixlog/*.txt`.
+
+---
+
+## ITEM 1 (E1) — the gate ladder comes from the contract
+
+**Diff summary.**
+- `gate_headroom._SIGMA_REL_DEFAULT = (0.1, 0.2, 0.4, 0.8)` **deleted**. In its place a
+  comment naming what it got wrong: it swept 0.8 (which AM2-3a deletes) and treated 0.4 as
+  a decision rung (which AM2-3a demotes to diagnostic-only).
+- `Hedging_backtest.contract_thresholds`: two new keys, `gate_sigma_rel_decision` and
+  `gate_sigma_rel_diagnostic`, from `oracle_headroom_gate.sigma_rel_ladder.{decision,
+  diagnostic}`. Both added to `test_contract_thresholds._EXPECTED`.
+- `gate_headroom._resolve_ladder(cfg, sigma_rel_list, sigma_rel_diagnostic)` (new) returns
+  `[(sigma_rel, decision_eligible), ...]` ascending plus the source. `sigma_rel_list=None`
+  (the new default, and what the CLI passes unless a human overrides) = the CONTRACT ladder.
+- **The trap the amendment notes flagged (§4.1), handled:** eligibility is carried PER ARM
+  all the way to the decision scan. Arms are 4-tuples `(label, sigma_rel, sigma_gamma_abs,
+  decision_eligible)`; every record and summary row carries `rung_role` (`decision` /
+  `diagnostic`) and `decision_eligible`; the `next(...)` that picks the decision row now
+  requires `s["decision_eligible"]`. Diagnostic rungs are still swept, hedged, written to
+  `headroom.csv` and printed in the report table — they are excluded from the DECISION scan
+  and NOWHERE else.
+- Report: a ladder line naming source, decision rungs and DIAGNOSTIC-ONLY rungs; a `role`
+  column in the spread table; the DECISION section states the exclusion and why
+  (`region_of_validity`). CLI gains `--sigma-rel-diagnostic`; `--sigma-rel` defaults to
+  None = contract.
+- An explicit `sigma_rel_list` is treated as an OPERATOR OVERRIDE (those rungs are decision
+  rungs, `sigma_rel_diagnostic` defaults to empty) — but passing a rung the CONTRACT calls
+  diagnostic raises a loud `RuntimeWarning` naming it, and the report prints
+  "**LADDER OVERRIDDEN — this is NOT the contract ladder**". This is what keeps the three
+  pre-existing tests that deliberately pass `sigma_rel_list=(0.4,)` meaningful instead of
+  silently re-promoting 0.4; their warnings in the suite output are that signal firing.
+
+**Tests.** `test_gate_headroom.py::test_sigma_ladder_comes_from_the_contract` (no module
+literal survives; `_resolve_ladder` returns the contract's decision/diagnostic split; 0.8 is
+absent from what a default invocation executes) and
+`::test_diagnostic_rung_cannot_fire_the_decision_scan` (in-memory ladder decision=[0.05],
+diagnostic=[0.8]; the 0.8 arm clears the scan's own predicate — spread >= threshold AND
+`ci_excludes_zero_frac == 1.0` — and is asserted NEVER to be the decision row at any tier,
+while its `diagnostic` label reaches `headroom.csv` and the report).
+
+**Pre-fix (`audit/fixlog/e1_pre.txt`).**
+```
+>       assert {s["arm"] for s in res["summary"]} == {"s0.05", "s0.8"}
+E       AssertionError: assert {'s0.1', 's0....s0.4', 's0.8'} == {'s0.05', 's0.8'}
+E         Extra items in the left set:
+E         's0.2'
+E         's0.1'
+E         's0.4'
+2 failed, 8 deselected in 3.59s
+```
+(the default invocation swept the Python literal, not the contract ladder.)
+
+**Post-fix (`audit/fixlog/e1_post.txt`).** `2 passed, 8 deselected in 2.64s`
+
+**Full suite after the commit: 244 passed.**

@@ -122,6 +122,15 @@ def contract_thresholds(cfg: dict) -> dict:
             float(at["dose_response"]["bootstrap_tail_prob_max"]),
         "gate_spread_threshold_rel":
             float(bm["oracle_headroom_gate"]["spread_threshold_rel"]),
+        # AM2-3a: the sigma ladder the gate SWEEPS, split into the rungs the
+        # DECISION section may fire on and the rungs that are reported/plotted
+        # but never a decision input (gate_headroom.py had a Python literal).
+        "gate_sigma_rel_decision": tuple(
+            float(x) for x in
+            bm["oracle_headroom_gate"]["sigma_rel_ladder"]["decision"]),
+        "gate_sigma_rel_diagnostic": tuple(
+            float(x) for x in
+            bm["oracle_headroom_gate"]["sigma_rel_ladder"]["diagnostic"]),
         "moneyness_wing_bounds":
             tuple(float(x) for x in sp["moneyness_wing_holdout"]["moneyness_bounds"]),
         "plateau_tol": float(bm["information_matching"]["plateau_tol"]),

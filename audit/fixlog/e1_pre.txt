@@ -1,0 +1,30 @@
+    def test_diagnostic_rung_cannot_fire_the_decision_scan():
+        """AM2-3a's whole point: a rung the contract declares DIAGNOSTIC must never be
+        selected by the DECISION scan, even when it clears the spread threshold and
+        every seed's CI excludes 0 — which the huge-sigma rung below does.
+    
+        The ladder is trimmed IN MEMORY (the contract file is untouched) exactly as
+        _trim_to_combined_cell trims the sweep geometry."""
+        cfg = _cfg(n_paths=96, freq=252)
+        cfg["benchmark"]["oracle_headroom_gate"]["sigma_rel_ladder"] = {
+            "decision": [0.05], "diagnostic": [0.8]}
+        out = tempfile.mkdtemp()
+        res = gh.run_gate(cfg, mode="field", out_dir=out, n_cloud_states=400,
+                          n_cloud_paths=96, spread_threshold_rel=-1e9)
+    
+        # the executed ladder IS the contract's (0.2/0.4 of the old literal are absent)
+>       assert {s["arm"] for s in res["summary"]} == {"s0.05", "s0.8"}
+E       AssertionError: assert {'s0.1', 's0....s0.4', 's0.8'} == {'s0.05', 's0.8'}
+E         Extra items in the left set:
+E         's0.2'
+E         's0.1'
+E         's0.4'
+E         Extra items in the right set:
+E         's0.05'
+E         Use -v to get more diff
+
+test_gate_headroom.py:237: AssertionError
+=========================== short test summary info ============================
+FAILED test_gate_headroom.py::test_sigma_ladder_comes_from_the_contract - Ass...
+FAILED test_gate_headroom.py::test_diagnostic_rung_cannot_fire_the_decision_scan
+2 failed, 8 deselected in 3.59s
