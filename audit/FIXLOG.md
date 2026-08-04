@@ -980,3 +980,44 @@ E         + null
 **Post-fix (`audit/fixlog/e5_post.txt`).** `2 passed, 25 deselected in 0.32s`
 
 **Full suite after the commit: 254 passed.**
+
+---
+
+## ITEM 2 (E2) — clipped_frac re-measured at production scale, before any pilot exists
+
+**What was run.** `audit/repro/e2_g2_production_scale.py` (new): the CONTRACT ladder
+(decision 0.05/0.10/0.15/0.20 + diagnostic 0.40), field mode, confirmatory cell,
+`n_paths = 10000` (the engine's production per-cell count), the 10 confirmatory seeds
+42-51 — **one seed per gate run**, so the seed-to-seed spread of `clipped_frac` (explicitly
+unknown when AM2-3c set the bound) is measured rather than pooled away. 5241s wall clock.
+Output: `audit/fixlog/g2_production_scale.txt`, with the 256-path/2-seed column beside it.
+No pilot fit and no gate go/no-go run exists, so no value here could be chosen knowing
+which side of the bound `sigma_gamma_pilot` lands on.
+
+| sigma_rel | role | production mean | seed std | min | max | 256-path/2-seed |
+|---|---|---|---|---|---|---|
+| 0.05 | decision | 0.0027 | 0.0002 | 0.0024 | 0.0029 | not measured |
+| 0.10 | decision | 0.0737 | 0.0012 | 0.0712 | 0.0756 | 0.0614 |
+| 0.15 | decision | 0.1484 | 0.0021 | 0.1449 | 0.1516 | not measured |
+| 0.20 | decision | **0.2470** | 0.0030 | 0.2429 | **0.2513** | 0.2153 |
+| 0.40 | DIAGNOSTIC | 0.8137 | 0.0031 | 0.8102 | 0.8194 | 0.7800 |
+
+**### STOPPING POINT — this is the human's decision, not a code fix.**
+
+Production scale moves `clipped_frac` UP at every rung by a consistent ~11-20% relative.
+At the top DECISION rung the seed MEAN (0.2470) stays inside `clipped_frac_max = 0.25`,
+but **3 of the 10 seeds are outside it** (0.2504, 0.2505, 0.2513). The measured seed std is
+0.0030 — small — so this is not noise around a comfortable value: the rung sits ON the
+bound. AM2-3c chose 0.25 as "the smallest round bound admitting the whole DECISION ladder as
+measured (0.215 at its top rung)"; that 16% of headroom is 1.2% at production scale.
+
+Nothing was adjusted: the bound, the ladder and `_DELTA_CLIP` are exactly as the contract
+declares them. The options (drop 0.20 to diagnostic, raise `clipped_frac_max`, or accept a
+straddling top rung and say so in the gate report) are all contract decisions and are
+recorded here for the human to make BEFORE the gate runs.
+
+**Also worth noting:** the two rungs AM2-3a could only BOUND (0.05 and 0.15, from the
+monotonicity argument) are now measured, and both are comfortably inside — 0.0027 and
+0.1484 against bounds of "<= 0.061" and "<= 0.215". The monotonicity argument held.
+
+**Suite unchanged by this item (no `.py` under test was touched): 254 passed.**
