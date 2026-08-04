@@ -1,0 +1,15 @@
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(AssertionError, match="stop after the pre-flight"):
+>               rim.run_saturation_sweep(
+                    npz, seeds=[0], out_dir=str(tmp_path / "ok"), pinn_cfg=CFG,
+                    contract=CONTRACT, steps=16, multipliers=[1, 2],
+                    base_n_price_points=4, preflight="raise",
+                    train_overrides={"n_pde": 64, "batch": 64, "val_every": 8})
+E               TypeError: run_saturation_sweep() got an unexpected keyword argument 'preflight'
+
+test_run_info_matching.py:236: TypeError
+=========================== short test summary info ============================
+FAILED test_run_info_matching.py::test_preflight_refuses_before_a_single_training_step
+FAILED test_run_info_matching.py::test_preflight_is_silent_on_a_fillable_ladder
+2 failed, 13 deselected in 1.64s

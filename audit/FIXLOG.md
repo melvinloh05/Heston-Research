@@ -1056,3 +1056,46 @@ E       assert 0.1 == 0.42
 test above describing the closure. No verdict moves: the declared value is the old literal.
 
 **Full suite after the commit: 256 passed.**
+
+---
+
+## ITEM 7 (E7) — the I1 cap check runs pre-flight
+
+**Diff summary.**
+- `run_info_matching._preflight_row_cap(train_by_seed, mults, N, mode)` (new), called
+  immediately after the `ArmDataset` splits are built and BEFORE the first `train_model`
+  call. It compares the frozen split's row count against every rung's `m * N` and returns
+  the record `{mode, n_train_rows per seed, N, multipliers, required_rows, capped_rungs}`.
+- `run_saturation_sweep(..., preflight="warn")`: `"warn"` (default) emits a loud
+  `RuntimeWarning` naming the rows held, the rungs that cannot be filled, the row count they
+  require, and what to do about it, then runs — so the post-hoc flags still record what
+  happened. `"raise"` refuses to start with the same message. CLI: `--strict-preflight`.
+- The POST-HOC machinery is unchanged and remains the record: `subsample_capped` per row,
+  `capped_rungs`, `plateau_capped`, and `plateau_reached` forced False when a capped rung
+  binds. One assertion was added where they meet — the pre-flight's predicted `capped_rungs`
+  must equal the set the run actually produced, so a subsample that stopped honouring the cap
+  cannot pass silently — plus `plateau["preflight_capped_rungs"]` and a `preflight` key in
+  the returned dict.
+
+**Why `warn` is the default.** A raise changes when a legitimate run dies (audit N5 flagged
+exactly that), and the pre-existing I1 test asserts a capped sweep COMPLETES with
+`plateau_reached=False`. Refusing is one flag away and the warning is unmissable.
+
+**Tests.** `test_preflight_refuses_before_a_single_training_step` monkeypatches
+`rim.train_model` to raise, so a warning can only be observed if it was emitted before any
+training: the warn path warns and then dies inside the patched trainer, and `preflight="raise"`
+raises `ValueError` without ever reaching it. `test_preflight_is_silent_on_a_fillable_ladder`
+is the control — a ladder the artifact CAN fill neither warns nor refuses, and does reach
+training.
+
+**Pre-fix (`audit/fixlog/e7_pre.txt`).**
+```
+E               TypeError: run_saturation_sweep() got an unexpected keyword argument 'preflight'
+2 failed, 13 deselected in 1.64s
+```
+(before the fix there is no pre-flight at all: the cap surfaces only after every rung has
+trained.)
+
+**Post-fix (`audit/fixlog/e7_post.txt`).** `2 passed, 13 deselected, 1 warning in 1.67s`
+
+**Full suite after the commit: 258 passed.**

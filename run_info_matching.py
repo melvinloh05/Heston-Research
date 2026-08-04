@@ -385,13 +385,54 @@ def _persist_plateau_checkpoints(ckpt_root, seeds, pm, cfg_by_m, best_states, ds
 # the driver
 # ---------------------------------------------------------------------------
 
+def _preflight_row_cap(train_by_seed: dict, mults, N: int, mode: str) -> dict:
+    """Decide the row-cap question BEFORE any training (audit N5 / batch 3 ITEM 7).
+
+    A rung the frozen artifact cannot FILL trains on data bit-identical to the rung
+    below it, so the Gamma curve is flat there BY CONSTRUCTION and a plateau at or
+    below it bounds the LABEL ARTIFACT, not the architecture. That was detected
+    post-hoc, i.e. after every rung had been trained — on a full-size run, hours of
+    GPU spent to learn something both inputs already determined: the frozen split's
+    row count and the m*N ladder.
+
+    mode="warn" (default) shouts and lets the sweep run, so the post-hoc flags still
+    get to record what happened; mode="raise" refuses to start. Returns the record
+    either way. Nothing here changes the plateau rule.
+    """
+    if mode not in ("warn", "raise"):
+        raise ValueError(f"preflight must be 'warn' or 'raise', got {mode!r}")
+    rows_by_seed = {int(s): int(ds.n_rows) for s, ds in train_by_seed.items()}
+    smallest = min(rows_by_seed.values())
+    capped = sorted({int(m) for m in mults if int(m) * int(N) > smallest})
+    rec = {"mode": mode, "n_train_rows": rows_by_seed, "N": int(N),
+           "multipliers": [int(m) for m in mults],
+           "required_rows": {int(m): int(m) * int(N) for m in mults},
+           "capped_rungs": capped}
+    if not capped:
+        return rec
+    msg = (f"[info-matching] PRE-FLIGHT: the frozen training split holds "
+           f"{smallest} rows, but multipliers {capped} of the ladder "
+           f"{[int(m) for m in mults]} at N={N} require up to "
+           f"{max(int(m) * int(N) for m in capped)} rows. Those rungs would train "
+           f"on bit-identical data, so any plateau at or below them is a ROW-CAP "
+           f"artifact, not an information plateau. Grow the label artifact (or "
+           f"shrink N) before reporting a saturation budget.")
+    if mode == "raise":
+        raise ValueError(msg + " (preflight='raise')")
+    warnings.warn(msg + " Continuing under preflight='warn': the sweep will run and "
+                        "plateau_reached will be forced False if a capped rung binds.",
+                  RuntimeWarning)
+    return rec
+
+
 def run_saturation_sweep(data: str, seeds, out_dir: str, *,
                          pinn_cfg: str = "pinn_config.yaml",
                          contract: str = "heston_benchmark_v6.yaml",
                          device: str = "cpu", steps: int | None = None,
                          multipliers=None, base_n_price_points: int | None = None,
                          tol: float | None = None, train_overrides: dict | None = None,
-                         ckpt_root: str | None = None) -> dict:
+                         ckpt_root: str | None = None,
+                         preflight: str = "warn") -> dict:
     """Run the full A10 saturation sweep + capacity control; write the CSVs, PNG, paragraph,
     AND persist the plateau-m checkpoint the downstream full sweep hedges.
 
@@ -408,6 +449,14 @@ def run_saturation_sweep(data: str, seeds, out_dir: str, *,
     it at the shared grid root so info_matched_baseline sits beside the other arms).
     `base_n_price_points` overrides N (the config default is 4096; tests shrink it so the
     subsample actually bites on a tiny artifact). `steps` overrides the training budget.
+
+    `preflight` decides what an UNFILLABLE ladder does BEFORE any training happens
+    (audit N5 / fix batch 3 ITEM 7): "warn" (default) shouts and runs anyway; "raise"
+    refuses to start. Both inputs of that check — the frozen split's row count and the
+    m*N ladder — are known before the first optimizer step, so a mis-sized artifact must
+    not cost a full sweep to discover. The POST-HOC flags (`subsample_capped`,
+    `capped_rungs`, `plateau_capped`, the forced `plateau_reached=False`) are unchanged
+    and remain the record of what actually happened.
     """
     contract_d = yaml.safe_load(Path(contract).read_text())
     if tol is None:                                 # the plateau rule is CONTRACT-declared
@@ -442,6 +491,10 @@ def run_saturation_sweep(data: str, seeds, out_dir: str, *,
     # val split is arm-independent for a price-only baseline; build once per seed.
     val_by_seed = {s: ArmDataset(data, base, "val", seed=s) for s in seeds}
     train_by_seed = {s: ArmDataset(data, base, "train", seed=s) for s in seeds}
+
+    # PRE-FLIGHT (audit N5 / batch 3 ITEM 7): decide the row-cap question HERE, on
+    # the frozen row count and the ladder, before a single optimizer step.
+    pf = _preflight_row_cap(train_by_seed, mults, N, preflight)
 
     def _one(cfg, seed, n_target):
         train_ds = subsample_train(train_by_seed[seed], n_target, seed)
@@ -496,6 +549,12 @@ def run_saturation_sweep(data: str, seeds, out_dir: str, *,
     order = [r["multiplier"] for r in curve]
     plat["capped_rungs"] = sorted({r["multiplier"] for r in perseed
                                    if r["width_mult"] == 1.0 and r["subsample_capped"]})
+    # the pre-flight predicted exactly this set from the row count and the ladder;
+    # they must agree, and a divergence means the subsample stopped honouring the cap.
+    assert plat["capped_rungs"] == pf["capped_rungs"], (
+        f"pre-flight predicted capped rungs {pf['capped_rungs']} but the run "
+        f"produced {plat['capped_rungs']}")
+    plat["preflight_capped_rungs"] = list(pf["capped_rungs"])
     binding = [m for m in plat["capped_rungs"] if order.index(m) <= plat["plateau_index"]]
     plat["plateau_capped"] = bool(binding)
     if binding:
@@ -565,7 +624,7 @@ def run_saturation_sweep(data: str, seeds, out_dir: str, *,
           f"persisted {len(checkpoints)} best.pt under "
           f"{Path(ckpt_root) / _ckpt_arm_dir()}/s<seed>/.")
     return {"paths": {k: str(v) for k, v in paths.items()},
-            "plateau": plat, "per_seed": perseed, "agg": agg,
+            "plateau": plat, "preflight": pf, "per_seed": perseed, "agg": agg,
             "paragraph": paragraph, "N": N, "multipliers": mults, "seeds": seeds,
             "checkpoints": checkpoints, "ckpt_root": str(ckpt_root)}
 
@@ -615,6 +674,10 @@ def _build_cli() -> argparse.ArgumentParser:
     ap.add_argument("--multipliers", default=None, help="comma-separated m override")
     ap.add_argument("--base-n", type=int, default=None,
                     help="override N (config default 4096); mostly for tests/small artifacts")
+    ap.add_argument("--strict-preflight", action="store_true",
+                    help="REFUSE to start when the frozen split cannot fill the m*N "
+                         "ladder (default: shout and run anyway, then force "
+                         "plateau_reached False if a capped rung binds)")
     return ap
 
 
@@ -631,7 +694,8 @@ def main(argv=None) -> dict:
     return run_saturation_sweep(
         args.data, seeds, args.out_dir, pinn_cfg=args.pinn_cfg, contract=args.contract,
         device=args.device, steps=args.steps, multipliers=mults,
-        base_n_price_points=args.base_n, ckpt_root=args.ckpt_root)
+        base_n_price_points=args.base_n, ckpt_root=args.ckpt_root,
+        preflight="raise" if args.strict_preflight else "warn")
 
 
 if __name__ == "__main__":

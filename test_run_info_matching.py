@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import json
+import warnings
 
 import numpy as np
 import pytest
@@ -190,6 +191,55 @@ def test_row_cap_cannot_masquerade_as_a_plateau(npz, tmp_path):
                       rim.BUDGET_SIDECAR).read_text())
     assert rec["data_capped_multipliers"] == [1, 2]
     assert "CAPPED" in rec["note"]
+
+
+def test_preflight_refuses_before_a_single_training_step(npz, tmp_path, monkeypatch):
+    """N5/ITEM 7: the row-cap check is decided by `train_ds.n_rows` and the m*N
+    ladder, BOTH known before the first optimizer step. On a full-size run the
+    post-hoc check spends hours of GPU before announcing the ladder was unfillable.
+
+    train_model is monkeypatched to explode, so if anything trains, the test fails
+    with THAT error instead — i.e. the warning below can only have been emitted
+    pre-flight."""
+    def _boom(*a, **k):
+        raise AssertionError("a training step ran despite an unfillable ladder")
+
+    monkeypatch.setattr(rim, "train_model", _boom)
+    out = tmp_path / "preflight_warn"
+    with pytest.warns(RuntimeWarning, match="PRE-FLIGHT"):
+        with pytest.raises(AssertionError, match="a training step ran"):
+            rim.run_saturation_sweep(
+                npz, seeds=[0], out_dir=str(out), pinn_cfg=CFG, contract=CONTRACT,
+                steps=16, multipliers=[1, 2], base_n_price_points=10_000,
+                train_overrides={"n_pde": 64, "batch": 64, "val_every": 8})
+
+    # strict mode refuses outright, still before any training
+    out2 = tmp_path / "preflight_raise"
+    with pytest.raises(ValueError, match="rows"):
+        rim.run_saturation_sweep(
+            npz, seeds=[0], out_dir=str(out2), pinn_cfg=CFG, contract=CONTRACT,
+            steps=16, multipliers=[1, 2], base_n_price_points=10_000,
+            preflight="raise",
+            train_overrides={"n_pde": 64, "batch": 64, "val_every": 8})
+
+
+def test_preflight_is_silent_on_a_fillable_ladder(npz, tmp_path, monkeypatch):
+    """The control: a ladder the artifact CAN fill must not warn or refuse, in
+    either mode — the check has to discriminate, not always fire."""
+    calls = []
+    monkeypatch.setattr(rim, "train_model",
+                        lambda *a, **k: calls.append(1) or (_ for _ in ()).throw(
+                            AssertionError("stop after the pre-flight")))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(AssertionError, match="stop after the pre-flight"):
+            rim.run_saturation_sweep(
+                npz, seeds=[0], out_dir=str(tmp_path / "ok"), pinn_cfg=CFG,
+                contract=CONTRACT, steps=16, multipliers=[1, 2],
+                base_n_price_points=4, preflight="raise",
+                train_overrides={"n_pde": 64, "batch": 64, "val_every": 8})
+    assert calls, "the fillable ladder must reach training"
+    assert not [w for w in caught if "PRE-FLIGHT" in str(w.message)]
 
 
 def test_uncapped_ladder_reports_no_capping(npz, tmp_path):
