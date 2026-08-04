@@ -358,6 +358,98 @@ def test_dose_response_monotone_end_to_end(tmp_path):
     assert not any(r["is_reference"] for r in rows if r["arm"] == "sigma_050")
 
 
+def test_dose_cvar_mean_uses_the_same_seeds_as_the_fit(tmp_path):
+    """A5: restricting the isotonic/Spearman fit to the COMMON seeds is right,
+    but cvar_mean is the point E3 PLOTS and the value bs_gap differences. With a
+    partial resume the seed sets diverge, and the plotted point then comes from a
+    different subset than the fitted line for that arm."""
+    npz = _fake_labels_npz(tmp_path / "labels.npz")
+    # sigma_050 is missing seeds 3 and 4 (a partial resume), so common = {0,1,2}.
+    # shuffled HAS all five and its cvar varies with the seed, so its own-seed
+    # mean (50.0) and its common-seed mean (45.0) genuinely differ.
+    arm_cvar = {
+        "sigma_000": lambda s: 10.0,
+        "sigma_050": lambda s: 20.0,
+        "shuffled": lambda s: 40.0 + 5.0 * s,
+        "gradient_penalty_only": lambda s: 9.5,
+    }
+    ps = tmp_path / "ps_partial.csv"
+    cols = ["direction", "magnitude", "sweep", "in_model", "lambda_j", "sigma_j",
+            "method", "tc", "seed", "cvar", "t_ex"]
+    rows_csv = []
+    for arm, fn in arm_cvar.items():
+        seeds = (0, 1, 2) if arm == "sigma_050" else (0, 1, 2, 3, 4)
+        for s in seeds:
+            rows_csv.append({"direction": "combined", "magnitude": 1.0,
+                             "sweep": "perturbation", "in_model": False,
+                             "lambda_j": "", "sigma_j": "", "method": arm,
+                             "tc": 0.01, "seed": s, "cvar": fn(s), "t_ex": ""})
+    _write_csv(ps, rows_csv, cols)
+
+    _vd, rows = ar.dose_response(ps, npz, PINN_CFG,
+                                 dose_arms=("sigma_000", "sigma_050", "shuffled",
+                                            "gradient_penalty_only"),
+                                 n_boot=200, seed=1)
+    byarm = {r["arm"]: r for r in rows}
+    common = [0, 1, 2]
+    # the discriminating arm: shuffled has all five seeds, so its own-seed mean
+    # (50.0) is NOT its common-seed mean (45.0). The plotted point must be the
+    # one the fit used.
+    assert byarm["shuffled"]["cvar_mean"] == pytest.approx(45.0)
+    for arm in ("sigma_000", "sigma_050", "shuffled"):
+        exp = float(np.mean([arm_cvar[arm](s) for s in common]))
+        assert byarm[arm]["cvar_mean"] == pytest.approx(exp), arm
+        assert byarm[arm]["n_seeds_common"] == len(common)
+    assert "n_seeds_common" in ar.DOSE_COLS
+    # the arm's OWN seed count is still reported, so the shortfall stays visible
+    assert byarm["sigma_050"]["n_seeds"] == 3 and byarm["shuffled"]["n_seeds"] == 5
+    # the reference arm is off the fit -> no common-seed restriction claimed
+    assert byarm["gradient_penalty_only"]["n_seeds_common"] == ""
+
+
+def test_dose_bs_gap_uses_the_common_seeds(tmp_path, monkeypatch):
+    """A5 sibling: bs_gap differences two cvar_mean values, so it inherits the
+    same asymmetry. With bs_gamma short a seed, the reported gap must be the
+    common-seed gap.
+
+    The label-error axis is stubbed: the fake labels npz cannot serve the
+    bs_gamma arm (its implied-vol inversion needs real prices), and the axis
+    values are irrelevant here — only which SEEDS the y-values average over."""
+    npz = _fake_labels_npz(tmp_path / "labels.npz")
+    _err = {"sigma_000": 0.0, "sigma_050": 0.5, "bs_gamma": 0.2,
+            "gradient_penalty_only": float("nan")}
+    monkeypatch.setattr(
+        ar, "_measured_label_error",
+        lambda _npz, _cfg, arm, _seed: (
+            _err[arm], "none" if arm == "gradient_penalty_only" else "stub", 0.0))
+    arm_cvar = {"sigma_000": lambda s: 10.0 + 2.0 * s,
+                "sigma_050": lambda s: 20.0,
+                "bs_gamma": lambda s: 30.0,
+                "gradient_penalty_only": lambda s: 9.5}
+    cols = ["direction", "magnitude", "sweep", "in_model", "lambda_j", "sigma_j",
+            "method", "tc", "seed", "cvar", "t_ex"]
+    rows_csv = []
+    for arm, fn in arm_cvar.items():
+        seeds = (0, 1, 2) if arm == "bs_gamma" else (0, 1, 2, 3, 4)
+        for s in seeds:
+            rows_csv.append({"direction": "combined", "magnitude": 1.0,
+                             "sweep": "perturbation", "in_model": False,
+                             "lambda_j": "", "sigma_j": "", "method": arm,
+                             "tc": 0.01, "seed": s, "cvar": fn(s), "t_ex": ""})
+    ps = _write_csv(tmp_path / "ps_bs.csv", rows_csv, cols)
+    vd, rows = ar.dose_response(ps, npz, PINN_CFG,
+                                dose_arms=("sigma_000", "sigma_050", "bs_gamma",
+                                           "gradient_penalty_only"),
+                                n_boot=100, seed=1)
+    byarm = {r["arm"]: r for r in rows}
+    gap = byarm["bs_gamma"]["cvar_mean"] - byarm["sigma_000"]["cvar_mean"]
+    # common = {0,1,2}: sigma_000 -> 12.0 (its OWN 5-seed mean is 14.0), so the
+    # common-seed gap is 18.0 and the pre-fix mixed-seed gap would be 16.0
+    assert byarm["sigma_000"]["cvar_mean"] == pytest.approx(12.0)
+    assert gap == pytest.approx(18.0)
+    assert f"gap={gap:.4g}" in vd["notes"]
+
+
 def test_dose_response_flat_null(tmp_path):
     npz = _fake_labels_npz(tmp_path / "labels.npz")
     # CVaR NON-monotone in label error (highest at the smallest error): distinct

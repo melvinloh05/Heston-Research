@@ -64,7 +64,8 @@ _GRADPEN = "gradient_penalty_only"
 VERDICT_COLS = ["threshold_id", "cell", "n_seeds", "statistic", "ci_lo", "ci_hi",
                 "verdict", "notes"]
 DOSE_COLS = ["arm", "label_source", "gamma_label_noise_sigma", "label_error",
-             "cvar_mean", "cvar_seed_std", "n_seeds", "isotonic_fit", "is_reference"]
+             "cvar_mean", "cvar_seed_std", "n_seeds", "n_seeds_common",
+             "isotonic_fit", "is_reference"]
 
 
 # ---------------------------------------------------------------------------
@@ -545,8 +546,12 @@ def dose_response(per_seed_csv, labels_npz, pinn_cfg_path, *,
          ||gamma_ref|| from the frozen label artifact (build_arm_labels) — this
          puts shuffled/bs_gamma on the SAME axis as the sigma arms (documented:
          a single scalar per arm, not the noise sigma).
-    y  = misspec CVaR95 at (direction, magnitude, tc) per arm, seed mean of the
-         arm's own 'cvar' column.
+    y  = misspec CVaR95 at (direction, magnitude, tc) per arm, mean of the 'cvar'
+         column over the seeds COMMON to every fitted arm — the same seed set the
+         isotonic/Spearman fit uses, so the plotted point and the fitted line can
+         never come from different subsets (audit A5). `n_seeds` is the arm's own
+         count, `n_seeds_common` the fit set's; reference arms carry "" for the
+         latter since they are off the fit.
     Fit: isotonic (CVaR non-decreasing in label error) + Spearman rank corr with
     a seed-bootstrap p. Verdict 'monotone' iff rho>0 and p<spearman_p_max, else
     'flat' (the pre-registered regularization null). gradient_penalty_only is the
@@ -596,7 +601,8 @@ def dose_response(per_seed_csv, labels_npz, pinn_cfg_path, *,
         is_ref = (arm == reference_arm) or not math.isfinite(err)
         rows.append({"arm": arm, "label_source": src, "gamma_label_noise_sigma": sig,
                      "label_error": err, "cvar_mean": y_mean, "cvar_seed_std": y_std,
-                     "n_seeds": n, "isotonic_fit": float("nan"), "is_reference": is_ref})
+                     "n_seeds": n, "n_seeds_common": "",
+                     "isotonic_fit": float("nan"), "is_reference": is_ref})
         if not is_ref and math.isfinite(err) and math.isfinite(y_mean) and cvars:
             fit_arms.append(arm)
             xs.append(err)
@@ -608,13 +614,26 @@ def dose_response(per_seed_csv, labels_npz, pinn_cfg_path, *,
     rho_ci = (float("nan"), float("nan"))
     common = sorted(set.intersection(*seed_sets)) if seed_sets else []
 
-    def _arm_y_mean(i):
-        if common:
-            return float(np.mean([y_by_seed[i][s] for s in common]))
-        return float(np.mean(list(y_by_seed[i].values())))
+    def _arm_ys(i) -> list:
+        """Arm i's y values on the seed set the FIT uses (common when it exists)."""
+        d = y_by_seed[i]
+        return [d[s] for s in common] if common else list(d.values())
+
+    # audit A5: cvar_mean is the point E3 PLOTS and the value bs_gap differences,
+    # so it must come from the SAME seed set the isotonic/Spearman fit runs on.
+    # Restricting the fit to `common` is right; reporting the mean over each arm's
+    # OWN seeds left the plotted point and the fitted line on different subsets
+    # whenever a partial resume made the sets diverge. `n_seeds` keeps the arm's
+    # own count (the shortfall stays visible); `n_seeds_common` records the fit set.
+    for i, a in enumerate(fit_arms):
+        m, sd, n = _finite_mean_std(_arm_ys(i))
+        for rec in rows:
+            if rec["arm"] == a:
+                rec["cvar_mean"], rec["cvar_seed_std"] = m, sd
+                rec["n_seeds_common"] = n
 
     if len(fit_arms) >= 2:
-        ys = [_arm_y_mean(i) for i in range(len(fit_arms))]
+        ys = [float(np.mean(_arm_ys(i))) for i in range(len(fit_arms))]
         iso = isotonic_increasing(xs, ys)
         for a, fv in zip(fit_arms, iso):
             for rec in rows:
