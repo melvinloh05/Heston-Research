@@ -1,0 +1,26 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______ test_rel_improvement_does_not_invert_on_a_negative_baseline_cvar _______
+
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-59/test_rel_improvement_does_not_0')
+
+    def test_rel_improvement_does_not_invert_on_a_negative_baseline_cvar(tmp_path):
+        """Q4: the denominator was a SIGNED CVaR. If the baseline's worst 5% of
+        outcomes were still profits (cvar_b < 0), a genuine improvement
+        (cvar_a < cvar_b) produced a NEGATIVE rel_improvement and confirmatory_cell's
+        `rel >= 0.10` read a real improvement as a failure. The contract excludes
+        that state; a silent verdict inversion is not an acceptable way to meet it."""
+        b = np.abs(np.random.default_rng(1).normal(0, 1, 400)) + 4.0    # PnL: all profits
+        a = b + 1.0                                                     # rung3: better still
+        st = hb.paired_bootstrap_cvar_diff(a, b, 0.95, 100, 3)
+        assert hb.cvar(b, 0.95) < 0.0            # worst 5% are still profits -> cvar < 0
+        assert st["diff"] < 0.0                                         # a beats b
+>       assert st["rel_improvement"] > 0.0, (
+            "an improvement against a negative baseline CVaR read as a regression")
+E       AssertionError: an improvement against a negative baseline CVaR read as a regression
+E       assert -0.2487825561423195 > 0.0
+
+test_analyze_results.py:721: AssertionError
+=========================== short test summary info ============================
+FAILED test_analyze_results.py::test_rel_improvement_does_not_invert_on_a_negative_baseline_cvar
+1 failed, 23 deselected in 0.11s

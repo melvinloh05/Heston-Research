@@ -1,0 +1,12 @@
+.                                                                        [100%]
+=============================== warnings summary ===============================
+test_analyze_results.py::test_rel_improvement_does_not_invert_on_a_negative_baseline_cvar
+  /Users/melvin/Documents/Heston Research/Hedging_backtest.py:647: RuntimeWarning: baseline CVaR95 is NEGATIVE (-4.01957): the baseline's worst tail is still profitable, which the contract does not anticipate. rel_improvement uses |cvar_b| so its SIGN still means 'a beats b', but the magnitude is not comparable to the pre-registered 10%.
+    "rel_improvement": rel_improvement(cvar_a, cvar_b)}
+
+test_analyze_results.py::test_rel_improvement_does_not_invert_on_a_negative_baseline_cvar
+  /Users/melvin/Documents/Heston Research/analyze_results.py:265: RuntimeWarning: baseline CVaR95 is NEGATIVE (-4.01957): the baseline's worst tail is still profitable, which the contract does not anticipate. rel_improvement uses |cvar_b| so its SIGN still means 'a beats b', but the magnitude is not comparable to the pre-registered 10%.
+    "rel_improvement": hb.rel_improvement(cvar_a, cvar_b),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 23 deselected, 2 warnings in 0.15s

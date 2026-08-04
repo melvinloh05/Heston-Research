@@ -36,6 +36,7 @@ import hashlib
 import json
 import logging
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -576,6 +577,29 @@ def cvar(pnl: np.ndarray, level: float) -> float:
     return float(part[losses.size - n_tail:].mean())
 
 
+def rel_improvement(cvar_a: float, cvar_b: float) -> float:
+    """Pre-registered relative improvement of arm a over baseline b:
+    (cvar_b - cvar_a) / |cvar_b|, NaN when cvar_b == 0.
+
+    ONE definition, shared by the engine and analyze_results (audit Q4). The
+    denominator is ABSOLUTE: a signed one inverts the sign of a real improvement
+    whenever the baseline CVaR is negative (worst 5% still profits), which would
+    make confirmatory_cell read a pass as a fail. Positive == a beats b, for
+    either sign of cvar_b. A non-positive baseline is warned about, not silently
+    normalized — the contract excludes that state and it should be noticed.
+    """
+    if cvar_b == 0.0:
+        return float("nan")
+    if cvar_b < 0.0:
+        warnings.warn(
+            f"baseline CVaR95 is NEGATIVE ({cvar_b:.6g}): the baseline's worst "
+            "tail is still profitable, which the contract does not anticipate. "
+            "rel_improvement uses |cvar_b| so its SIGN still means 'a beats b', "
+            "but the magnitude is not comparable to the pre-registered 10%.",
+            RuntimeWarning, stacklevel=2)
+    return float((cvar_b - cvar_a) / abs(cvar_b))
+
+
 def bootstrap_cvar_se(pnl: np.ndarray, level: float, n_boot: int,
                       seed: int) -> float:
     """Bootstrap-over-paths SE of CVaR (path/bootstrap variance component;
@@ -597,8 +621,16 @@ def paired_bootstrap_cvar_diff(pnl_a: np.ndarray, pnl_b: np.ndarray,
     difference, which is what makes the pre-registered CI decidable. Returns
     {'diff': cvar(a) - cvar(b) (< 0 when a beats b under loss = -PnL),
      'ci_lo'/'ci_hi': percentile 95% CI on the difference,
-     'rel_improvement': (cvar(b) - cvar(a)) / cvar(b) — the pre-registered
-     relative-improvement reading (NaN when cvar(b) == 0)}."""
+     'rel_improvement': (cvar(b) - cvar(a)) / |cvar(b)| — the pre-registered
+     relative-improvement reading (NaN when cvar(b) == 0)}.
+
+    The denominator is the ABSOLUTE baseline CVaR (audit Q4). For a short call
+    hedged discretely under misspecified dynamics, cvar95(loss) is positive with
+    near-certainty and the abs() is inert; but if the baseline's worst 5% were
+    still profits (cvar_b < 0), a signed denominator would flip the SIGN of a
+    genuine improvement and confirmatory_cell's `rel >= 0.10` would read it as a
+    failure. Sign of rel_improvement now means "a beats b" for either sign of
+    cvar_b; the state is still flagged by _warn_nonpositive_baseline_cvar."""
     pnl_a, pnl_b = np.asarray(pnl_a, float), np.asarray(pnl_b, float)
     assert pnl_a.shape == pnl_b.shape, \
         "paired bootstrap requires both arms on the same CRN paths"
@@ -612,8 +644,7 @@ def paired_bootstrap_cvar_diff(pnl_a: np.ndarray, pnl_b: np.ndarray,
     lo, hi = np.percentile(diffs, [2.5, 97.5])
     return {"diff": float(cvar_a - cvar_b),
             "ci_lo": float(lo), "ci_hi": float(hi),
-            "rel_improvement": (float((cvar_b - cvar_a) / cvar_b)
-                                if cvar_b != 0.0 else float("nan"))}
+            "rel_improvement": rel_improvement(cvar_a, cvar_b)}
 
 # ---------------------------------------------------------------------------
 # sweep drivers

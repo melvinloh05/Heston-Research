@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 import analyze_results as ar
+import Hedging_backtest as hb
 
 PINN_CFG = "pinn_config.yaml"
 
@@ -704,6 +705,40 @@ def test_run_analysis_writes_outputs_and_degrades(tmp_path):
     memo = open(paths["mechanism_memo"]).read()
     assert "Three candidate stories" in memo
     assert "COST parameter" in memo
+
+
+def test_rel_improvement_does_not_invert_on_a_negative_baseline_cvar(tmp_path):
+    """Q4: the denominator was a SIGNED CVaR. If the baseline's worst 5% of
+    outcomes were still profits (cvar_b < 0), a genuine improvement
+    (cvar_a < cvar_b) produced a NEGATIVE rel_improvement and confirmatory_cell's
+    `rel >= 0.10` read a real improvement as a failure. The contract excludes
+    that state; a silent verdict inversion is not an acceptable way to meet it."""
+    b = np.abs(np.random.default_rng(1).normal(0, 1, 400)) + 4.0    # PnL: all profits
+    a = b + 1.0                                                     # rung3: better still
+    # and the state is FLAGGED, not silently normalized
+    with pytest.warns(RuntimeWarning, match="baseline CVaR95 is NEGATIVE"):
+        st = hb.paired_bootstrap_cvar_diff(a, b, 0.95, 100, 3)
+    assert hb.cvar(b, 0.95) < 0.0            # worst 5% are still profits -> cvar < 0
+    assert st["diff"] < 0.0                                         # a beats b
+    assert st["rel_improvement"] > 0.0, (
+        "an improvement against a negative baseline CVaR read as a regression")
+
+    # the analysis layer's own pooled copy of the same expression
+    d = tmp_path / "negcvar"
+    for s in range(10):
+        _write_cell(d, s, _misspec_tag(1.0),
+                    {ar._pnl_key("rung3", 0.01): a, ar._pnl_key("standard_pinn", 0.01): b})
+    res = ar.paired_ci_from_npz(d, "rung3", "standard_pinn", 0.01, n_boot=100, seed=3,
+                                slug_filter=ar._MISSPEC_FILTER)
+    assert res["pooled"]["cvar_b"] < 0.0
+    assert res["pooled"]["rel_improvement"] > 0.0
+
+    # unchanged in the state the contract DOES expect (positive loss tail)
+    lb = -np.abs(np.random.default_rng(2).normal(0, 1, 400)) - 3.0   # PnL: losses
+    la = lb + 1.0
+    st2 = hb.paired_bootstrap_cvar_diff(la, lb, 0.95, 100, 3)
+    assert st2["rel_improvement"] == pytest.approx(
+        (hb.cvar(lb, 0.95) - hb.cvar(la, 0.95)) / hb.cvar(lb, 0.95))
 
 
 def test_corrupt_artifact_is_an_error_verdict_not_a_null(tmp_path):

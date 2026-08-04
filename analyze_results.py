@@ -259,8 +259,10 @@ def _pooled_stratified(blocks, level: float, n_boot: int, seed: int) -> dict:
     lo, hi = (float(x) for x in np.percentile(diffs, [2.5, 97.5]))
     return {"cvar_a": float(cvar_a), "cvar_b": float(cvar_b),
             "diff": float(cvar_a - cvar_b),
-            "rel_improvement": (float((cvar_b - cvar_a) / cvar_b)
-                                if cvar_b != 0.0 else float("nan")),
+            # ONE definition, shared with the engine (audit Q4): |cvar_b| in the
+            # denominator, so a negative baseline CVaR cannot invert the sign of
+            # a real improvement and turn a pass into a fail.
+            "rel_improvement": hb.rel_improvement(cvar_a, cvar_b),
             "ci_lo": lo, "ci_hi": hi,
             "n_paths": int(a_all.size), "n_seeds": len(blocks)}
 
