@@ -255,6 +255,100 @@ def test_diagnostic_rung_cannot_fire_the_decision_scan():
     assert "DIAGNOSTIC" in report and "0.8" in report
 
 
+def test_effective_sigmas_track_the_nominal_until_the_clip_bites():
+    """AM2-3b: `sigma_rel` labels the field BEFORE the clip; the gate must also
+    report what was DELIVERED. An arm the clip does not touch delivers exactly
+    what its label says; an arm the clip binds on heavily delivers MATERIALLY
+    LESS, in both the delta and the gamma quantity."""
+    gate_seed = int(_BM["meta"]["global_seed"])
+    small_t, big_t = 0.05 * _RMS, 3.0 * _RMS
+    small = gh.NoisyOracleProvider(_BASE, small_t, gate_seed, _RANGES, _CLOUD,
+                                   "field")
+    big = gh.NoisyOracleProvider(_BASE, big_t, gate_seed, _RANGES, _CLOUD,
+                                 "field")
+    dc = gh._base_delta_cloud(_BASE, _CLOUD, 100.0)
+
+    es = gh.effective_sigmas(small, _CLOUD, dc)
+    eb = gh.effective_sigmas(big, _CLOUD, dc)
+
+    # unclipped arm: the delivered gamma error IS the labelled one
+    assert es["clipped_frac_reference_cloud"] == 0.0
+    assert abs(es["sigma_gamma_effective"] - small_t) <= 0.02 * small_t
+    # heavily-clipped arm: both delivered quantities fall materially short
+    assert eb["clipped_frac_reference_cloud"] > 0.5
+    assert eb["sigma_gamma_effective"] < 0.5 * big_t
+    assert eb["sigma_delta_effective"] < 0.5 * float(np.std(big.eta(*_CLOUD)))
+    # ... and they are different quantities in different units
+    assert eb["sigma_gamma_effective"] != eb["sigma_delta_effective"]
+
+
+def test_effective_gamma_can_EXCEED_the_nominal_in_the_decision_band():
+    """MEASURED, and deliberately locked in (fix batch 3, see
+    audit/FINDINGS_ADDENDUM.md N8): across the contract's DECISION rungs the
+    delivered gamma scale is LARGER than the nominal label, not smaller.
+
+    Where the clip binds, the corrupted hedger holds a position that is FLAT in
+    S, so its delta error there is (bound - delta(S)) and its gamma error is the
+    oracle's own -Gamma — typically bigger than the calibrated field's. G2's
+    "the clip understates the corruption, so the gate is conservative" therefore
+    does NOT hold uniformly; it holds only once the clip binds almost
+    everywhere. Nothing here changes the clip or the ladder — the point is that
+    the direction must be READ off sigma_gamma_effective, not assumed."""
+    dc = gh._base_delta_cloud(_BASE, _CLOUD, 100.0)
+    gate_seed = int(_BM["meta"]["global_seed"])
+    ratios = {}
+    for sr in _BM["oracle_headroom_gate"]["sigma_rel_ladder"]["decision"]:
+        p = gh.NoisyOracleProvider(_BASE, float(sr) * _RMS, gate_seed, _RANGES,
+                                   _CLOUD, "field")
+        e = gh.effective_sigmas(p, _CLOUD, dc)
+        ratios[float(sr)] = e["sigma_gamma_effective"] / (float(sr) * _RMS)
+    top = max(ratios)
+    assert abs(ratios[min(ratios)] - 1.0) <= 0.02        # no clip, no gap
+    assert ratios[top] > 1.1, (
+        f"the delivered gamma scale at the top decision rung is {ratios[top]:.3f}"
+        " x nominal; this test records that the clip INFLATES it, and the "
+        "inflation is what the effective column exists to expose")
+
+
+def test_effective_sigmas_reach_summary_csv_and_report():
+    """Both quantities travel to every consumer under the contract's field names."""
+    cfg = _cfg(n_paths=96, freq=252)
+    out = tempfile.mkdtemp()
+    res = gh.run_gate(cfg, sigma_rel_list=(0.1,), sigma_rel_diagnostic=(0.4,),
+                      mode="field", out_dir=out, n_cloud_states=500,
+                      n_cloud_paths=96)
+    for key in ("sigma_delta_effective", "sigma_gamma_effective"):
+        assert all(key in s for s in res["summary"])
+        assert all(key in r for r in res["records"])
+        assert key in Path(res["csv_path"]).read_text().splitlines()[0]
+        assert key in Path(res["report_path"]).read_text()
+        assert all(np.isfinite(s[key]) for s in res["summary"])
+
+
+def test_pilot_is_compared_against_sigma_gamma_effective():
+    """AM2-3b `compare_pilot_against: sigma_gamma_effective` — the pilot number is
+    a GAMMA rmse, so the gate must compare it against the post-clip GAMMA scale,
+    not the post-clip delta-error std (a units error). Asserted on the value the
+    comparison actually carries, not merely on both fields existing."""
+    cfg = _cfg(n_paths=96, freq=252)
+    out = tempfile.mkdtemp()
+    res = gh.run_gate(cfg, mode="field", out_dir=out, n_cloud_states=500,
+                      n_cloud_paths=96, sigma_gamma_abs=3.0 * _RMS)
+    pc = res["pilot_comparison"]
+    eff = res["effective_sigmas"]["pilot"]
+
+    assert pc["compare_against"] == (
+        _BM["oracle_headroom_gate"]["effective_sigma_reporting"]
+           ["compare_pilot_against"]) == "sigma_gamma_effective"
+    # the clip bites hard at 3x rms(Gamma), so the two effective quantities are
+    # far apart — the comparison must carry the GAMMA one
+    assert pc["effective"] == eff["sigma_gamma_effective"]
+    assert pc["effective"] != eff["sigma_delta_effective"]
+    assert pc["nominal"] == 3.0 * _RMS
+    assert pc["effective"] < pc["nominal"]           # the clip removed corruption
+    assert "sigma_gamma_effective" in Path(res["report_path"]).read_text()
+
+
 if __name__ == "__main__":
     for fn in sorted(k for k in dir() if k.startswith("test_")):
         globals()[fn]()

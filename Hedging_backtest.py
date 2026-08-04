@@ -131,6 +131,13 @@ def contract_thresholds(cfg: dict) -> dict:
         "gate_sigma_rel_diagnostic": tuple(
             float(x) for x in
             bm["oracle_headroom_gate"]["sigma_rel_ladder"]["diagnostic"]),
+        # AM2-3b: WHICH post-clip quantity the pilot point is compared against.
+        # A field NAME rather than a number, but pre-registered for the same
+        # reason: sigma_gamma_pilot is a gamma rmse, so comparing it against the
+        # delta-error std would be a units error.
+        "gate_compare_pilot_against": str(
+            bm["oracle_headroom_gate"]["effective_sigma_reporting"]
+              ["compare_pilot_against"]),
         "moneyness_wing_bounds":
             tuple(float(x) for x in sp["moneyness_wing_holdout"]["moneyness_bounds"]),
         "plateau_tol": float(bm["information_matching"]["plateau_tol"]),

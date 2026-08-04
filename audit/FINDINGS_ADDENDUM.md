@@ -96,3 +96,49 @@ rung3 once per (gamma, vega) combo (9 by contract) = **13 fits**, against the pr
 grid's 4x3x3 = **36**. So the change is a ~2.8x *saving*, not a cost — recorded here only
 because the compute-accounting table will show a different fit count than the pre-amendment
 plan implied, and someone will ask.
+
+---
+
+## N8 · P1 — the delta clip INFLATES the delivered gamma scale across the decision band
+
+Found while implementing fix batch 3 ITEM 3 (the two effective-sigma quantities), measured
+on the reference cloud at the contract's own ladder, gate seed 42, `n_states=2000`:
+
+| sigma_rel | clipped_frac | sigma_gamma_effective / nominal | sigma_delta_effective / nominal |
+|---|---|---|---|
+| 0.05 | 0.003 | 1.00 | 1.00 |
+| 0.10 | 0.044 | **1.21** | 1.05 |
+| 0.15 | 0.123 | **1.41** | 1.16 |
+| 0.20 | 0.216 | **1.54** | 1.28 |
+| 0.40 (diagnostic) | 0.808 | 1.40 | 1.34 |
+| 0.80 (dropped) | 0.965 | 0.62 | 0.82 |
+| 3.00 | 0.994 | 0.17 | 0.23 |
+
+**Why.** Where the clip binds, the corrupted provider holds a position that is FLAT in S, so
+its delta error there is `bound - delta(S)` and its gamma error is the ORACLE's own `-Gamma`
+— which is larger than the calibrated field's gamma error until the field itself is huge.
+The clip therefore does not simply *remove* corruption; in the decision band it *replaces*
+a small calibrated gamma error with a bigger uncalibrated one.
+
+**What this contradicts.** Fix batch 2's G2 note (`gate_headroom._CLIPPED_NOTE`, and the
+`clipped_frac` reasoning quoted into `heston_benchmark_v6.yaml`'s AM2-3 block comment) says
+that where the clip binds "the DELIVERED gamma error is smaller than the sigma_gamma this
+row is labelled with: the spread is understated and the gate is conservative". Measured, that
+direction is WRONG over the whole decision ladder and only becomes right past ~96% clipped.
+The gate is therefore not conservative in the way the note claims: at `sigma_rel = 0.2` the
+delivered gamma error is ~1.5x its label, so a spread read there overstates what a PINN with
+that gamma rmse would suffer.
+
+**Not fixed because** the clip is explicitly frozen by the task ("Do not widen or remove the
+delta clip"), the ladder is pre-registered, and `clipped_frac_max` is a contract number.
+What batch 3 does instead: EMIT `sigma_gamma_effective` per arm everywhere (ITEM 3), so the
+direction is read rather than assumed; append the measured caveat to `_CLIPPED_NOTE`; and
+lock the finding into the suite as
+`test_gate_headroom.py::test_effective_gamma_can_EXCEED_the_nominal_in_the_decision_band`
+so a later session cannot silently "restore" the old claim.
+
+**For the human.** Two consequences worth a decision before the gate runs: (1) the AM2-3
+block comment's conservatism argument no longer holds as written; (2) if the ladder is meant
+to be an axis of DELIVERED gamma error, the rungs are mislabelled upward by 20-55% across
+the decision band, which shifts what a given spread means — a contract question, not a code
+one.

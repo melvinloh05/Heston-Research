@@ -1,0 +1,25 @@
+>           assert all(key in s for s in res["summary"])
+E           assert False
+E            +  where False = all(<generator object test_effective_sigmas_reach_summary_csv_and_report.<locals>.<genexpr> at 0x124277440>)
+
+test_gate_headroom.py:289: AssertionError
+_____________ test_pilot_is_compared_against_sigma_gamma_effective _____________
+
+    def test_pilot_is_compared_against_sigma_gamma_effective():
+        """AM2-3b `compare_pilot_against: sigma_gamma_effective` — the pilot number is
+        a GAMMA rmse, so the gate must compare it against the post-clip GAMMA scale,
+        not the post-clip delta-error std (a units error). Asserted on the value the
+        comparison actually carries, not merely on both fields existing."""
+        cfg = _cfg(n_paths=96, freq=252)
+        out = tempfile.mkdtemp()
+        res = gh.run_gate(cfg, mode="field", out_dir=out, n_cloud_states=500,
+                          n_cloud_paths=96, sigma_gamma_abs=3.0 * _RMS)
+>       pc = res["pilot_comparison"]
+E       KeyError: 'pilot_comparison'
+
+test_gate_headroom.py:305: KeyError
+=========================== short test summary info ============================
+FAILED test_gate_headroom.py::test_effective_sigmas_track_the_nominal_until_the_clip_bites
+FAILED test_gate_headroom.py::test_effective_sigmas_reach_summary_csv_and_report
+FAILED test_gate_headroom.py::test_pilot_is_compared_against_sigma_gamma_effective
+3 failed, 10 deselected in 4.36s

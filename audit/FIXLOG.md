@@ -808,3 +808,65 @@ E         's0.4'
 **Post-fix (`audit/fixlog/e1_post.txt`).** `2 passed, 8 deselected in 2.64s`
 
 **Full suite after the commit: 244 passed.**
+
+---
+
+## ITEM 3 (E3) — both post-clip quantities, and the pilot compared against the right one
+
+**Diff summary.**
+- `gate_headroom._base_delta_cloud(base, states, K)` (new): one pass of UNCORRUPTED delta
+  AND gamma on the reference cloud, shared by every arm.
+- `gate_headroom.effective_sigmas(provider, states, base_cloud)` (new): the two DELIVERED
+  quantities the contract declares, measured on `err = clip(delta + eta) - delta` over the
+  reference cloud —
+  `sigma_delta_effective = std(err)` (delta units) and
+  `sigma_gamma_effective = std(d err/dS)` (gamma units). Contract field names, verbatim.
+  `d err/dS` is taken ANALYTICALLY and almost everywhere: `eta_dS` where the clip is slack,
+  exactly `-Gamma` where it binds. A finite difference was tried first and rejected — it
+  straddles the clip boundary on an O(h) set of states and turns each kink into an ~eta/h
+  spike (+11% at sigma_rel = 0.1, h = 1e-3 of the S range), i.e. it measures the estimator,
+  not the corruption. iid mode returns NaN for the gamma quantity WITH a reason string (a
+  per-call redraw has no d/dS); its measurement draws come from a dedicated `_STREAM_EFF`
+  so measuring can never advance the strawman's hedging stream.
+- Both quantities are attached to every `records` row, every `summary` row, `headroom.csv`
+  and the report table (which now shows NOMINAL and both EFFECTIVE columns), plus a new
+  `_EFFECTIVE_NOTE` spelling out the units and why the pilot uses the gamma one.
+- `_pilot_comparison(cfg, sigma_gamma_abs, eff, clipped_frac)` (new) + result key
+  `pilot_comparison`: reads the comparison FIELD NAME from the contract
+  (`effective_sigma_reporting.compare_pilot_against` via the new
+  `contract_thresholds["gate_compare_pilot_against"]`, parity-tested) and carries
+  `{compare_against, nominal, effective, sigma_delta_effective, sigma_gamma_effective,
+  clipped_frac}`. The report gets a "Pilot point vs the DELIVERED corruption" section.
+
+**Tests.** `test_effective_sigmas_track_the_nominal_until_the_clip_bites` (unclipped arm
+delivers its label to 2%; 3x-rms arm delivers < 0.5x in BOTH quantities),
+`test_effective_sigmas_reach_summary_csv_and_report`, and
+`test_pilot_is_compared_against_sigma_gamma_effective` — which asserts on the VALUE the
+comparison carries (`pc["effective"] == eff["sigma_gamma_effective"] !=
+eff["sigma_delta_effective"]`), not merely that both fields exist.
+
+**Pre-fix (`audit/fixlog/e3_pre.txt`).**
+```
+>           assert all(key in s for s in res["summary"])
+E           assert False
+...
+>       pc = res["pilot_comparison"]
+E       KeyError: 'pilot_comparison'
+3 failed, 10 deselected in 4.36s
+```
+
+**Post-fix (`audit/fixlog/e3_post.txt`).** `4 passed, 10 deselected in 5.06s`
+
+**A MEASURED SURPRISE, recorded as `audit/FINDINGS_ADDENDUM.md` N8 (P1).** Emitting the
+quantity immediately falsified the assumption it was introduced to report. Across the whole
+DECISION ladder the delivered gamma scale is LARGER than the nominal label — 1.21x at
+sigma_rel 0.10, 1.41x at 0.15, 1.54x at 0.20 — and only drops below it past ~96% clipped.
+Where the clip binds, the corrupted hedger is FLAT in S, so its gamma error there is the
+ORACLE's own `-Gamma`, bigger than the calibrated field's. G2's "delivered error is smaller,
+so the gate is conservative" (still quoted in the contract's AM2-3 block comment) is
+therefore not true in the band the gate decides on. Nothing was widened or re-tuned: the
+clip and the ladder are untouched, `_CLIPPED_NOTE` gained the measured caveat, and
+`test_effective_gamma_can_EXCEED_the_nominal_in_the_decision_band` locks the direction into
+the suite. **The contract-side consequence is the human's call (see "Open for the human").**
+
+**Full suite after the commit: 249 passed.**

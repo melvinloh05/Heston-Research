@@ -80,6 +80,9 @@ from providers import HestonCFProvider
 
 _STREAM_FIELD = 11          # rng stream id of the frozen RFF draw (spec-pinned)
 _STREAM_IID = 12            # rng stream id of the iid strawman draws
+_STREAM_EFF = 13            # rng stream of the effective-sigma MEASUREMENT draws
+                            # (iid mode only; a separate stream so measuring can
+                            # never advance the strawman's hedging draws)
 
 _N_FEATURES = 256           # Kf random Fourier features
 # ANISOTROPIC bandwidth (S, v, tau) in range-normalized units: S at the spec's
@@ -102,7 +105,26 @@ _CLIPPED_NOTE = (
     "DELIVERED gamma error is smaller than the sigma_gamma this row is labelled "
     "with: the spread is understated and the gate is conservative (the safe "
     "direction for a go/no-go, but the sigma axis is then not the axis it is "
-    "labelled with). A value of 0 means the sigma axis is exact.")
+    "labelled with). A value of 0 means the sigma axis is exact. "
+    "MEASURED CAVEAT (fix batch 3): that 'smaller, so conservative' reading is "
+    "NOT uniform. Where the clip binds, the corrupted hedger is FLAT in S, so "
+    "its gamma error there is the oracle's own -Gamma; across the contract's "
+    "DECISION rungs the DELIVERED gamma scale comes out LARGER than the nominal "
+    "label (up to ~1.5x), and only falls below it once the clip binds nearly "
+    "everywhere. Read the direction off `sigma_gamma_effective` below — do not "
+    "assume it.")
+
+# AM2-3b: what the two DELIVERED sigma columns mean, stated once and reused by
+# the report so the nominal/effective distinction cannot be read past.
+_EFFECTIVE_NOTE = (
+    "`sigma_gamma` is NOMINAL: the field is calibrated to it BEFORE the "
+    f"[{_DELTA_CLIP[0]}, {_DELTA_CLIP[1]}] delta clip. `sigma_gamma_effective` "
+    "(gamma units: std of d/dS of the delivered post-clip delta error) and "
+    "`sigma_delta_effective` (delta units: std of that error) are what was "
+    "actually DELIVERED. sigma_gamma_pilot is a gamma rmse, so the pilot point "
+    "is compared against `sigma_gamma_effective` — comparing it against the "
+    "delta-error std would be a units error (contract "
+    "`effective_sigma_reporting.compare_pilot_against`).")
 
 # ---------------------------------------------------------------------------
 # geometry helpers (contract-derived; no YAML edits, read-only consumption)
@@ -174,6 +196,83 @@ def gamma_rms(provider: HestonCFProvider, states, K: float) -> float:
         g[m] = np.asarray(provider.evaluate(S[m], v[m], float(t), K)["gamma"],
                           float)
     return float(np.sqrt(np.mean(g ** 2)))
+
+
+def _base_delta_cloud(base, states, K: float) -> dict:
+    """UNCORRUPTED delta AND gamma on the reference cloud (one pass, shared by
+    every arm — the base provider is the same object for all of them).
+
+    `effective_sigmas` needs delta to find where the clip binds and gamma because
+    d/dS of the delivered error is -Gamma exactly where it does."""
+    S, v, tau = (np.asarray(a, float).ravel() for a in states)
+    out = {"delta": np.empty(S.size), "gamma": np.empty(S.size)}
+    for t in np.unique(tau):
+        m = tau == t
+        got = base.evaluate(S[m], v[m], float(t), K)
+        out["delta"][m] = np.asarray(got["delta"], float)
+        out["gamma"][m] = np.asarray(got["gamma"], float)
+    return out
+
+
+def effective_sigmas(provider: "NoisyOracleProvider", states,
+                     base_cloud: dict) -> dict:
+    """The two DELIVERED (post-clip) corruption scales the contract declares
+    (`oracle_headroom_gate.effective_sigma_reporting`, AM2-3b).
+
+    `sigma_rel` / `sigma_gamma_target` label the field BEFORE the clip; wherever
+    `_DELTA_CLIP` binds, less corruption is delivered than the label claims. Both
+    quantities are measured on the DELIVERED delta error
+    `err(z) = clip(delta(z) + eta(z)) - delta(z)` over the reference cloud:
+
+    - `sigma_delta_effective` — std(err). Delta units. The direct measure of how
+      much of the intended corruption the clip removed.
+    - `sigma_gamma_effective` — std(d(err)/dS). GAMMA units, the post-clip
+      counterpart of the calibration statistic std(d(eta)/dS), and the ONLY one
+      of the two commensurable with `sigma_gamma_pilot` (also a gamma rmse) —
+      hence the contract's `compare_pilot_against: sigma_gamma_effective`.
+
+    d(err)/dS is taken ANALYTICALLY and almost everywhere, not by finite
+    difference: where the clip is slack the delivered error IS eta, so the
+    derivative is the analytic `eta_dS`; where it binds, err = bound - delta and
+    the derivative is exactly -Gamma. A finite difference instead straddles the
+    clip boundary on an O(h) set of states and turns each kink into a spike
+    ~eta/h, which INFLATES the statistic above its nominal (measured: +11% at
+    sigma_rel = 0.1, h = 1e-3 of the S range) — the opposite of the "the clip
+    removed corruption" reading the contract asks this number to support.
+
+    In iid mode the delta error is redrawn per call, so it has no spatial
+    derivative at all: `sigma_gamma_effective` is NaN and the reason travels with
+    it in `note`. The measurement draws from `_STREAM_EFF`, never from the
+    strawman's own hedging stream.
+    """
+    S, v, tau = (np.asarray(a, float).ravel() for a in states)
+    lo, hi = _DELTA_CLIP
+    delta, gamma = base_cloud["delta"], base_cloud["gamma"]
+
+    if provider.mode == "field":
+        err_raw = provider.eta(S, v, tau).ravel()
+        err_raw_dS = provider.eta_dS(S, v, tau).ravel()
+    else:
+        rng = np.random.default_rng([provider.seed, _STREAM_EFF])
+        err_raw = rng.normal(0.0, provider.sigma_delta, delta.shape)
+        err_raw_dS = None
+    raw = delta + err_raw
+    bound = (raw < lo) | (raw > hi)
+    delivered = np.clip(raw, lo, hi) - delta
+
+    out = {"sigma_delta_effective": float(np.std(delivered)),
+           "sigma_gamma_target": provider.sigma_gamma_target,
+           "clipped_frac_reference_cloud": float(np.mean(bound))}
+    if err_raw_dS is None:
+        out["sigma_gamma_effective"] = float("nan")
+        out["note"] = ("iid mode: the delta error is redrawn every call, so the "
+                       "delivered error has no d/dS — sigma_gamma_effective is "
+                       "undefined (NaN), not zero")
+    else:
+        out["sigma_gamma_effective"] = float(
+            np.std(np.where(bound, -gamma, err_raw_dS)))
+        out["note"] = ""
+    return out
 
 # ---------------------------------------------------------------------------
 # corrupted oracle provider
@@ -437,6 +536,12 @@ def run_gate(cfg: dict, sigma_rel_list: tuple | None = None,
             base, sa, gate_seed, ranges, ref, mode=mode)
         providers[f"noisy_{label}"] = noisy_by_arm[label]
 
+    # DELIVERED (post-clip) corruption scales, per arm — AM2-3b. One base-delta
+    # pass on the reference cloud is shared by every arm.
+    base_cloud = _base_delta_cloud(base, ref, K)
+    eff_by_arm = {label: effective_sigmas(noisy_by_arm[label], ref, base_cloud)
+                  for label, _sr, _sa, _e in arms}
+
     rows = hb.run_headline(cfg, providers,
                            out_dir=os.path.join(out_dir, "engine"))
 
@@ -456,6 +561,12 @@ def run_gate(cfg: dict, sigma_rel_list: tuple | None = None,
                     "sigma_gamma_abs": sa,
                     "rung_role": "decision" if elig else "diagnostic",
                     "decision_eligible": bool(elig),
+                    # NOMINAL sigma above, DELIVERED post-clip sigmas here — the
+                    # contract requires both on every row (AM2-3b).
+                    "sigma_delta_effective":
+                        eff_by_arm[label]["sigma_delta_effective"],
+                    "sigma_gamma_effective":
+                        eff_by_arm[label]["sigma_gamma_effective"],
                     "tc": tc, "seed": seed,
                     "cvar_oracle": co, "cvar_noisy": cn,
                     "spread_rel": ((cn - co) / co if co != 0.0
@@ -477,6 +588,10 @@ def run_gate(cfg: dict, sigma_rel_list: tuple | None = None,
                 "sigma_gamma_abs": sa,
                 "rung_role": "decision" if elig else "diagnostic",
                 "decision_eligible": bool(elig),
+                "sigma_delta_effective":
+                    eff_by_arm[label]["sigma_delta_effective"],
+                "sigma_gamma_effective":
+                    eff_by_arm[label]["sigma_gamma_effective"],
                 "tc": tc, "n_seeds": len(grp),
                 "spread_rel_mean": float(np.mean(sp)),
                 "spread_rel_seed_std": (float(np.std(sp, ddof=1))
@@ -500,13 +615,20 @@ def run_gate(cfg: dict, sigma_rel_list: tuple | None = None,
              and s["spread_rel_mean"] >= spread_threshold_rel
              and s["ci_excludes_zero_frac"] == 1.0), None)
 
+    pilot_comparison = (None if sigma_gamma_abs is None else
+                        _pilot_comparison(cfg, float(sigma_gamma_abs),
+                                          eff_by_arm["pilot"],
+                                          noisy_by_arm["pilot"].clipped_fraction))
+
     os.makedirs(out_dir, exist_ok=True)
     csv_path = hb.write_rows_csv(records, os.path.join(out_dir, "headroom.csv"))
     report_path = _write_report(
         os.path.join(out_dir, "headroom_report.md"), cfg, mode, rms, arms,
-        tiers, seeds, summary, decision, spread_threshold_rel, ladder)
+        tiers, seeds, summary, decision, spread_threshold_rel, ladder,
+        pilot_comparison)
     return {"records": records, "summary": summary, "decision": decision,
-            "ladder": ladder,
+            "ladder": ladder, "effective_sigmas": eff_by_arm,
+            "pilot_comparison": pilot_comparison,
             "spread_threshold_rel": spread_threshold_rel,
             "rms_gamma": rms, "csv_path": csv_path,
             "report_path": report_path, "rows": rows,
@@ -515,10 +637,28 @@ def run_gate(cfg: dict, sigma_rel_list: tuple | None = None,
             "clipped_fraction_note": _CLIPPED_NOTE}
 
 
+def _pilot_comparison(cfg: dict, sigma_gamma_abs: float, eff: dict,
+                      clipped_frac: float) -> dict:
+    """Compare the pilot's sigma_gamma against the quantity the CONTRACT names
+    (`effective_sigma_reporting.compare_pilot_against`, AM2-3b).
+
+    sigma_gamma_pilot is a GAMMA rmse; `sigma_gamma_effective` is the post-clip
+    gamma scale, and it is the only one of the two effective quantities in the
+    same units. The field name is read from the contract rather than assumed, so
+    a human who re-decides that key moves this comparison with it."""
+    field = hb.contract_thresholds(cfg)["gate_compare_pilot_against"]
+    return {"compare_against": field,
+            "nominal": float(sigma_gamma_abs),
+            "effective": float(eff[field]),
+            "sigma_delta_effective": float(eff["sigma_delta_effective"]),
+            "sigma_gamma_effective": float(eff["sigma_gamma_effective"]),
+            "clipped_frac": float(clipped_frac)}
+
+
 def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
                   tiers: list, seeds: list, summary: list,
                   decision: dict, spread_threshold_rel: float,
-                  ladder: dict) -> str:
+                  ladder: dict, pilot_comparison: dict | None = None) -> str:
     """headroom_report.md: run header, per-(sigma, tc) seed-mean table, and
     the DECISION section (explicitly a HUMAN go/no-go)."""
     eng = cfg["engine"]
@@ -555,19 +695,35 @@ def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
         "## Spread over seeds (spread_rel = (cvar_noisy - cvar_oracle) / "
         "cvar_oracle)",
         "",
-        "| arm | role | sigma_rel | sigma_gamma | tc | spread_rel mean |"
-        " seed std | CI-excl-0 frac | t_ex mean | clipped_frac |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| arm | role | sigma_rel | sigma_gamma (NOMINAL) |"
+        " sigma_gamma_effective | sigma_delta_effective | tc |"
+        " spread_rel mean | seed std | CI-excl-0 frac | t_ex mean |"
+        " clipped_frac |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for s in summary:
         role = s["rung_role"].upper() if not s["decision_eligible"] else "decision"
         lines.append(
             f"| {s['arm']} | {role} | {s['sigma_rel']:.4g} | "
-            f"{s['sigma_gamma_abs']:.4g} | {s['tc']} | "
+            f"{s['sigma_gamma_abs']:.4g} | "
+            f"{s['sigma_gamma_effective']:.4g} | "
+            f"{s['sigma_delta_effective']:.4g} | {s['tc']} | "
             f"{s['spread_rel_mean']:+.4f} | {s['spread_rel_seed_std']:.4f} | "
             f"{s['ci_excludes_zero_frac']:.2f} | {s['t_ex_mean']:.4f} | "
             f"{s.get('clipped_frac', float('nan')):.4f} |")
-    lines += ["", _CLIPPED_NOTE]
+    lines += ["", _EFFECTIVE_NOTE, "", _CLIPPED_NOTE]
+    if pilot_comparison is not None:
+        pc = pilot_comparison
+        lines += [
+            "", "## Pilot point vs the DELIVERED corruption", "",
+            f"- sigma_gamma_pilot (NOMINAL target): **{pc['nominal']:.6g}**",
+            f"- compared against `{pc['compare_against']}` (contract "
+            "`oracle_headroom_gate.effective_sigma_reporting."
+            f"compare_pilot_against`): **{pc['effective']:.6g}**",
+            f"- sigma_delta_effective (delta units, NOT the comparison target): "
+            f"{pc['sigma_delta_effective']:.6g}",
+            f"- clipped_frac on the pilot arm: {pc['clipped_frac']:.4f}",
+        ]
     lines += [
         "",
         "## DECISION (per tc tier)",

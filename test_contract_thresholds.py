@@ -63,6 +63,9 @@ _EXPECTED = [
     ("gate_sigma_rel_diagnostic",
      tuple(float(x) for x in
            BM["oracle_headroom_gate"]["sigma_rel_ladder"]["diagnostic"])),
+    ("gate_compare_pilot_against",
+     BM["oracle_headroom_gate"]["effective_sigma_reporting"]
+       ["compare_pilot_against"]),
     ("moneyness_wing_bounds",
      tuple(float(x) for x in BM["splits"]["moneyness_wing_holdout"]["moneyness_bounds"])),
     ("plateau_tol", BM["information_matching"]["plateau_tol"]),
