@@ -291,11 +291,72 @@ def test_pilot_prints_finite_sigma_gamma(npz, tmp_path, capsys):
                          "--lambdas", str(tmp_path / "absent.yaml"),
                          "--out", str(out), "--pilot", "--steps", "20"])
     printed = capsys.readouterr().out
-    assert "sigma_gamma_pilot BEFORE fix" in printed
+    # T1: default stdout carries ONLY the correct value. The BEFORE line
+    # reproduces the known-wrong pre-fix number (unconverged model -> typically
+    # LARGER), which would make the gate look more favourable if copied.
+    assert "sigma_gamma_pilot BEFORE fix" not in printed
     assert "sigma_gamma_pilot AFTER  fix" in printed
     assert np.isfinite(runlog["sigma_gamma_pilot"])
     assert np.isfinite(runlog["sigma_gamma_pilot_relative"])
     assert runlog["sigma_gamma_pilot_source"] == "gamma_ref"
+    # it is not LOST — the runlog keeps it under an unmistakable key
+    assert np.isfinite(runlog["sigma_gamma_pilot_prefix_bug"])
+
+    # ...and --show-prefix-bug puts it back, clearly labelled
+    train.main(["--arm", "rung3_delta_gamma_vega", "--seed", "4", "--data", npz,
+                "--pinn-cfg", CFG, "--contract", CONTRACT,
+                "--lambdas", str(tmp_path / "absent.yaml"),
+                "--out", str(tmp_path / "pilot2"), "--pilot", "--steps", "20",
+                "--show-prefix-bug"])
+    assert "sigma_gamma_pilot BEFORE fix" in capsys.readouterr().out
+
+
+def test_gate_reads_sigma_gamma_from_the_runlog(npz, tmp_path, monkeypatch):
+    """T1: the pilot -> gate handoff was a human copy-paste off a two-line
+    stdout whose FIRST line was the deliberately-reproduced wrong value, and
+    runlog['sigma_gamma_pilot'] was written by train.py and read by nothing.
+    The gate must be able to take the float straight from the runlog."""
+    import json
+
+    import gate_headroom as gh
+
+    out = tmp_path / "pilot"
+    runlog = train.main(["--arm", "rung3_delta_gamma_vega", "--seed", "4", "--data", npz,
+                         "--pinn-cfg", CFG, "--contract", CONTRACT,
+                         "--lambdas", str(tmp_path / "absent.yaml"),
+                         "--out", str(out), "--pilot", "--steps", "20"])
+    runlog_path = out / "runlog.json"
+
+    seen = {}
+
+    def fake_run_gate(cfg, **kw):                    # never run the real gate here
+        seen.update(kw)
+        return {"rms_gamma": 1.0, "csv_path": "x.csv", "report_path": "x.md"}
+
+    monkeypatch.setattr(gh, "run_gate", fake_run_gate)
+    gh.main(["--sigma-gamma-from-runlog", str(runlog_path),
+             "--out-dir", str(tmp_path / "gate")])
+
+    assert seen["sigma_gamma_abs"] == runlog["sigma_gamma_pilot"]
+
+    # it reads the key BY NAME, not by position: at smoke size best == last step
+    # so the two values coincide, which would hide a wrong pick. Force them apart.
+    doctored = tmp_path / "doctored.json"
+    log = json.loads(runlog_path.read_text())
+    log["sigma_gamma_pilot"] = 0.25
+    log["sigma_gamma_pilot_prefix_bug"] = 0.40      # the known-wrong, LARGER value
+    doctored.write_text(json.dumps(log))
+    seen.clear()
+    gh.main(["--sigma-gamma-from-runlog", str(doctored),
+             "--out-dir", str(tmp_path / "gate_b")])
+    assert seen["sigma_gamma_abs"] == 0.25
+
+    # a runlog with no pilot entry must fail loudly, not silently sweep
+    bare = tmp_path / "bare.json"
+    bare.write_text(json.dumps({"arm": "rung3"}))
+    with pytest.raises(KeyError, match="sigma_gamma_pilot"):
+        gh.main(["--sigma-gamma-from-runlog", str(bare),
+                 "--out-dir", str(tmp_path / "gate2")])
 
 
 class _FakeGammaModel:

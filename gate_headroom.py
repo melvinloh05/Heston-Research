@@ -495,15 +495,45 @@ def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
         "",
         "    python gate_headroom.py --mode field --out-dir results/gate",
         "",
-        "Pilot-calibrated point once the pilot fit exists:",
+        "Pilot-calibrated point once the pilot fit exists — read the float from",
+        "the runlog rather than retyping it (`train.py --pilot` also prints a",
+        "deliberately-reproduced PRE-FIX value, which must never reach the gate):",
         "",
-        "    python gate_headroom.py --sigma-gamma <abs sigma_gamma from"
-        " pilot fit>",
+        "    python gate_headroom.py --sigma-gamma-from-runlog <run>/runlog.json",
         "",
     ]
     with open(path, "w") as fh:
         fh.write("\n".join(lines))
     return path
+
+# ---------------------------------------------------------------------------
+# pilot -> gate handoff
+# ---------------------------------------------------------------------------
+
+
+def sigma_gamma_pilot_from_runlog(path: str) -> float:
+    """ABSOLUTE sigma_gamma_pilot out of a `train.py --pilot` runlog.json.
+
+    The handoff used to be a human copy-paste off a two-line stdout whose FIRST
+    line was the deliberately-reproduced pre-fix value — computed on an
+    unconverged model, so typically LARGER, which would make the gate look more
+    favourable than it is (audit T1). `sigma_gamma_pilot` is the best-step,
+    gamma_ref value; this reads exactly that key and refuses anything else.
+    """
+    import json
+
+    with open(path) as fh:
+        log = json.load(fh)
+    if "sigma_gamma_pilot" not in log:
+        raise KeyError(
+            f"{path!r} carries no 'sigma_gamma_pilot' — it is written only by "
+            "`python train.py --pilot`. Do NOT substitute "
+            "'sigma_gamma_pilot_prefix_bug': that is the known-wrong value.")
+    sigma = float(log["sigma_gamma_pilot"])
+    if not np.isfinite(sigma) or sigma <= 0.0:
+        raise ValueError(f"{path!r} carries a non-usable sigma_gamma_pilot={sigma!r}")
+    return sigma
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -524,12 +554,24 @@ def main(argv: list | None = None) -> None:
     ap.add_argument("--sigma-gamma", type=float, default=None,
                     help="ABSOLUTE pilot-calibrated sigma_gamma; replaces the "
                          "sweep with the single pilot point")
+    ap.add_argument("--sigma-gamma-from-runlog", default=None,
+                    help="PREFERRED over --sigma-gamma: path to a train.py "
+                         "--pilot runlog.json; reads sigma_gamma_pilot from it, "
+                         "so the pilot -> gate handoff is not a hand-typed float "
+                         "off a multi-line stdout (audit T1)")
     ap.add_argument("--n-paths", type=int, default=None,
                     help="override engine simulation.n_paths")
     ap.add_argument("--n-seeds", type=int, default=None,
                     help="use only the first N derived seeds")
     ap.add_argument("--out-dir", default="results/gate")
     args = ap.parse_args(argv)
+    sigma_gamma_abs = args.sigma_gamma
+    if args.sigma_gamma_from_runlog is not None:
+        if sigma_gamma_abs is not None:
+            ap.error("pass --sigma-gamma OR --sigma-gamma-from-runlog, not both")
+        sigma_gamma_abs = sigma_gamma_pilot_from_runlog(args.sigma_gamma_from_runlog)
+        print(f"sigma_gamma_pilot read from {args.sigma_gamma_from_runlog}: "
+              f"{sigma_gamma_abs:.6g}")
     cfg = hb.resolve_config()
     if args.n_paths is not None:
         cfg["engine"]["simulation"]["n_paths"] = int(args.n_paths)
@@ -537,7 +579,7 @@ def main(argv: list | None = None) -> None:
                  if args.n_seeds is not None else None)
     res = run_gate(cfg, sigma_rel_list=tuple(args.sigma_rel),
                    seed_list=seed_list, mode=args.mode, out_dir=args.out_dir,
-                   sigma_gamma_abs=args.sigma_gamma)
+                   sigma_gamma_abs=sigma_gamma_abs)
     print(f"rms(Gamma_oracle) = {res['rms_gamma']:.6g}")
     print(f"wrote {res['csv_path']}")
     print(f"wrote {res['report_path']}")

@@ -1,0 +1,111 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_____________________ test_pilot_prints_finite_sigma_gamma _____________________
+
+npz = '/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/train_labels0/labels.npz'
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_pilot_prints_finite_sigma0')
+capsys = <_pytest.capture.CaptureFixture object at 0x169f58470>
+
+    def test_pilot_prints_finite_sigma_gamma(npz, tmp_path, capsys):
+        out = tmp_path / "pilot"
+        runlog = train.main(["--arm", "rung3_delta_gamma_vega", "--seed", "4", "--data", npz,
+                             "--pinn-cfg", CFG, "--contract", CONTRACT,
+                             "--lambdas", str(tmp_path / "absent.yaml"),
+                             "--out", str(out), "--pilot", "--steps", "20"])
+        printed = capsys.readouterr().out
+        # T1: default stdout carries ONLY the correct value. The BEFORE line
+        # reproduces the known-wrong pre-fix number (unconverged model -> typically
+        # LARGER), which would make the gate look more favourable if copied.
+>       assert "sigma_gamma_pilot BEFORE fix" not in printed
+E       AssertionError: assert 'sigma_gamma...t BEFORE fix' not in 'sigma_gamma...curves.csv\n'
+E         'sigma_gamma_pilot BEFORE fix' is contained here:
+E           sigma_gamma_pilot BEFORE fix (last-step model, gamma (arm label)) = 0.0157787 (relative 1.00002)
+E         ? ++++++++++++++++++++++++++++
+E           sigma_gamma_pilot AFTER  fix (best-step model, gamma_ref) = 0.0157787 (relative 1.00002)
+E           wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_pilot_prints_finite_sigma0/pilot/best.pt (best step 20), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_pilot_prints_finite_sigma0/pilot/last.pt (matched_epochs step 20),...
+E         
+E         ...Full output truncated (1 line hidden), use '-vv' to show
+
+test_train.py:297: AssertionError
+_________________ test_gate_reads_sigma_gamma_from_the_runlog __________________
+
+npz = '/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/train_labels0/labels.npz'
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_gate_reads_sigma_gamma_fr0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x16faa5700>
+
+    def test_gate_reads_sigma_gamma_from_the_runlog(npz, tmp_path, monkeypatch):
+        """T1: the pilot -> gate handoff was a human copy-paste off a two-line
+        stdout whose FIRST line was the deliberately-reproduced wrong value, and
+        runlog['sigma_gamma_pilot'] was written by train.py and read by nothing.
+        The gate must be able to take the float straight from the runlog."""
+        import json
+    
+        import gate_headroom as gh
+    
+        out = tmp_path / "pilot"
+        runlog = train.main(["--arm", "rung3_delta_gamma_vega", "--seed", "4", "--data", npz,
+                             "--pinn-cfg", CFG, "--contract", CONTRACT,
+                             "--lambdas", str(tmp_path / "absent.yaml"),
+                             "--out", str(out), "--pilot", "--steps", "20"])
+        runlog_path = out / "runlog.json"
+    
+        seen = {}
+    
+        def fake_run_gate(cfg, **kw):                    # never run the real gate here
+            seen.update(kw)
+            return {"rms_gamma": 1.0, "csv_path": "x.csv", "report_path": "x.md"}
+    
+        monkeypatch.setattr(gh, "run_gate", fake_run_gate)
+>       gh.main(["--sigma-gamma-from-runlog", str(runlog_path),
+                 "--out-dir", str(tmp_path / "gate")])
+
+test_train.py:337: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+gate_headroom.py:532: in main
+    args = ap.parse_args(argv)
+/opt/anaconda3/lib/python3.12/argparse.py:1899: in parse_args
+    self.error(msg)
+/opt/anaconda3/lib/python3.12/argparse.py:2672: in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='__main__.py', usage=None, description='Oracle-headroom gate (contract oracle_headroom_gate); huma...ed — see module docstring.', formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+status = 2
+message = '__main__.py: error: unrecognized arguments: --sigma-gamma-from-runlog /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_gate_reads_sigma_gamma_fr0/pilot/runlog.json\n'
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, _sys.stderr)
+>       _sys.exit(status)
+E       SystemExit: 2
+
+/opt/anaconda3/lib/python3.12/argparse.py:2659: SystemExit
+----------------------------- Captured stdout call -----------------------------
+sigma_gamma_pilot BEFORE fix (last-step model, gamma (arm label)) = 0.0157787 (relative 1.00002)
+sigma_gamma_pilot AFTER  fix (best-step model, gamma_ref) = 0.0157787 (relative 1.00002)
+wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_gate_reads_sigma_gamma_fr0/pilot/best.pt (best step 20), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_gate_reads_sigma_gamma_fr0/pilot/last.pt (matched_epochs step 20), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_gate_reads_sigma_gamma_fr0/pilot/runlog.json, /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_gate_reads_sigma_gamma_fr0/pilot/loss_curves.csv
+----------------------------- Captured stderr call -----------------------------
+usage: __main__.py [-h] [--mode {field,iid}]
+                   [--sigma-rel SIGMA_REL [SIGMA_REL ...]]
+                   [--sigma-gamma SIGMA_GAMMA] [--n-paths N_PATHS]
+                   [--n-seeds N_SEEDS] [--out-dir OUT_DIR]
+__main__.py: error: unrecognized arguments: --sigma-gamma-from-runlog /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_gate_reads_sigma_gamma_fr0/pilot/runlog.json
+=============================== warnings summary ===============================
+test_train.py::test_pilot_prints_finite_sigma_gamma
+  /Users/melvin/Documents/Heston Research/train.py:273: RuntimeWarning: lambdas file /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_pilot_prints_finite_sigma0/absent.yaml not found; using pinn-config defaults (lambda_pde/gamma/vega unchanged)
+    warnings.warn(f"lambdas file {args.lambdas} not found; using pinn-config defaults "
+
+test_train.py::test_pilot_prints_finite_sigma_gamma
+test_train.py::test_gate_reads_sigma_gamma_from_the_runlog
+  /Users/melvin/Documents/Heston Research/train_pinn.py:285: RuntimeWarning: labels artifact has no 'split' key; falling back to an 80/20 by-parameter-point split with rng [seed, 21]
+    warnings.warn(
+
+test_train.py::test_gate_reads_sigma_gamma_from_the_runlog
+  /Users/melvin/Documents/Heston Research/train.py:273: RuntimeWarning: lambdas file /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-48/test_gate_reads_sigma_gamma_fr0/absent.yaml not found; using pinn-config defaults (lambda_pde/gamma/vega unchanged)
+    warnings.warn(f"lambdas file {args.lambdas} not found; using pinn-config defaults "
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test_train.py::test_pilot_prints_finite_sigma_gamma - AssertionError: ...
+FAILED test_train.py::test_gate_reads_sigma_gamma_from_the_runlog - SystemExi...
+2 failed, 14 deselected, 4 warnings in 2.58s

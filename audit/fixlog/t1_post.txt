@@ -1,0 +1,19 @@
+..                                                                       [100%]
+=============================== warnings summary ===============================
+test_train.py::test_pilot_prints_finite_sigma_gamma
+test_train.py::test_pilot_prints_finite_sigma_gamma
+  /Users/melvin/Documents/Heston Research/train.py:277: RuntimeWarning: lambdas file /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-49/test_pilot_prints_finite_sigma0/absent.yaml not found; using pinn-config defaults (lambda_pde/gamma/vega unchanged)
+    warnings.warn(f"lambdas file {args.lambdas} not found; using pinn-config defaults "
+
+test_train.py::test_pilot_prints_finite_sigma_gamma
+test_train.py::test_pilot_prints_finite_sigma_gamma
+test_train.py::test_gate_reads_sigma_gamma_from_the_runlog
+  /Users/melvin/Documents/Heston Research/train_pinn.py:285: RuntimeWarning: labels artifact has no 'split' key; falling back to an 80/20 by-parameter-point split with rng [seed, 21]
+    warnings.warn(
+
+test_train.py::test_gate_reads_sigma_gamma_from_the_runlog
+  /Users/melvin/Documents/Heston Research/train.py:277: RuntimeWarning: lambdas file /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-49/test_gate_reads_sigma_gamma_fr0/absent.yaml not found; using pinn-config defaults (lambda_pde/gamma/vega unchanged)
+    warnings.warn(f"lambdas file {args.lambdas} not found; using pinn-config defaults "
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2 passed, 14 deselected, 6 warnings in 2.95s

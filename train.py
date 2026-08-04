@@ -248,6 +248,10 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="disable early stop; run the full fixed-step matched-epochs budget")
     ap.add_argument("--pilot", action="store_true",
                     help="short fit; print sigma_gamma_pilot (oracle-headroom-gate input)")
+    ap.add_argument("--show-prefix-bug", action="store_true",
+                    help="also print the deliberately-reproduced pre-fix sigma_gamma_pilot "
+                         "(last-step model, arm label). It is ALWAYS in the runlog; it is off "
+                         "stdout by default because it is the wrong number to feed the gate")
     ap.add_argument("--select-lambdas", action="store_true",
                     help="run VALIDATION-ONLY joint lambda selection instead of training")
     ap.add_argument("--anchor-grids", default=None, help="held-out anchor grids (kept locked)")
@@ -305,6 +309,10 @@ def main(argv=None) -> dict:
     if args.pilot:
         # BEFORE: reproduces the prior bug exactly (last-step model, arm-label priority) so the
         # magnitude of the correction is visible before rerunning any gate decision on it.
+        # It is KEPT OUT of default stdout (audit T1): it is computed on an unconverged model
+        # and so is typically LARGER, and feeding it to the gate would make the gate look more
+        # favourable than it is. Default stdout carries only the correct value; the wrong one
+        # lives in the runlog under an unmistakable key and behind --show-prefix-bug.
         sigma_pre, rel_pre, src_pre = _pilot_gamma_rmse(model, val_ds, args.device,
                                                          prefer_ref=False)
         model.load_state_dict(best_state)
@@ -312,10 +320,15 @@ def main(argv=None) -> dict:
         runlog["sigma_gamma_pilot"] = sigma
         runlog["sigma_gamma_pilot_relative"] = rel
         runlog["sigma_gamma_pilot_source"] = src
-        print(f"sigma_gamma_pilot BEFORE fix (last-step model, {src_pre}) = "
-              f"{sigma_pre:.6g} (relative {rel_pre:.6g})")
+        runlog["sigma_gamma_pilot_prefix_bug"] = sigma_pre
+        runlog["sigma_gamma_pilot_prefix_bug_relative"] = rel_pre
+        if args.show_prefix_bug:
+            print(f"sigma_gamma_pilot BEFORE fix (last-step model, {src_pre}) = "
+                  f"{sigma_pre:.6g} (relative {rel_pre:.6g})  [DO NOT FEED TO THE GATE]")
         print(f"sigma_gamma_pilot AFTER  fix (best-step model, {src}) = "
               f"{sigma:.6g} (relative {rel:.6g})")
+        print("hand off to the gate WITHOUT retyping it:\n"
+              f"    python gate_headroom.py --sigma-gamma-from-runlog {out/'runlog.json'}")
 
     _write_loss_curve_csv(out / "loss_curves.csv", runlog["val_curve"])
     (out / "runlog.json").write_text(json.dumps(runlog, indent=2, default=str))
