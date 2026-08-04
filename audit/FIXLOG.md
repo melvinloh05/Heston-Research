@@ -1021,3 +1021,38 @@ monotonicity argument) are now measured, and both are comfortably inside — 0.0
 0.1484 against bounds of "<= 0.061" and "<= 0.215". The monotonicity argument held.
 
 **Suite unchanged by this item (no `.py` under test was touched): 254 passed.**
+
+---
+
+## ITEM 6 (E6) — the last TODO(C1) is closed; contract_requests.md is empty
+
+**Diff summary.**
+- `Hedging_backtest.contract_thresholds`: `"confirmatory_rel_threshold": 0.10,  # TODO(C1)`
+  becomes `float(at["confirmatory_cell_rel_min"])` (AM2-1). The docstring paragraph that
+  explained why one literal had to survive is replaced by the statement that none does.
+- `audit/contract_requests.md`: rewritten as a CLOSED-LOOP record — request 1 asked for
+  `acceptance_thresholds.confirmatory_cell_rel_min`, amendment #2 declared it under exactly
+  that name, batch 3 consumed it — plus the shape a future batch should use if it ever needs
+  a key again. No outstanding request remains.
+- `test_contract_thresholds.py`: parity entry `("confirmatory_rel_threshold",
+  _AT["confirmatory_cell_rel_min"])`, and a CONSUMPTION test.
+
+**Test.** `test_confirmatory_rel_threshold_is_read_not_typed` feeds a doctored copy of the
+contract carrying `confirmatory_cell_rel_min: 0.42` and asserts the helper returns 0.42 —
+a re-typed literal cannot pass that, whereas a parity assertion against the real YAML alone
+would have passed both before and after (the declared value happens to equal the old
+literal, 0.10, so nothing observable moved and only an injection test can tell them apart).
+
+**Pre-fix (`audit/fixlog/e6_pre.txt`).**
+```
+>       assert hb.contract_thresholds(doctored)["confirmatory_rel_threshold"] == 0.42
+E       assert 0.1 == 0.42
+1 failed, 1 passed, 35 deselected in 1.33s
+```
+
+**Post-fix (`audit/fixlog/e6_post.txt`).** `2 passed, 35 deselected in 1.40s`
+
+`grep -rn "TODO(C1)" --include="*.py" .` now returns ONE line, and it is the docstring of the
+test above describing the closure. No verdict moves: the declared value is the old literal.
+
+**Full suite after the commit: 256 passed.**

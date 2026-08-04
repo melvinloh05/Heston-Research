@@ -92,10 +92,11 @@ def contract_thresholds(cfg: dict) -> dict:
     engine-supplement keys (`n_boot`, `baseline_arm`, `oracle_arm`) are present only
     in the former case rather than silently defaulted.
 
-    TODO(C1): `confirmatory_rel_threshold` is the one value with NO numeric contract
-    key — `acceptance_thresholds.confirmatory_cell_pass` and
-    `metrics.cvar_convention.threshold_form` state ">=10% relative" in prose only.
-    Requested in audit/contract_requests.md; the literal lives HERE and nowhere else.
+    Every value here is READ from the contract; none is a Python literal. The last
+    exception — `confirmatory_rel_threshold`, which the contract stated only as the
+    prose ">=10% relative" — closed when amendment AM2-1 added
+    `acceptance_thresholds.confirmatory_cell_rel_min` (audit/contract_requests.md,
+    now empty).
     """
     bm = cfg.get("benchmark", cfg)
     eng = cfg.get("engine") or {}
@@ -112,7 +113,7 @@ def contract_thresholds(cfg: dict) -> dict:
         "confirmatory_direction": str(cc["perturbation"]),
         "confirmatory_regime": str(cc["regime"]),
         "confirmatory_magnitude": _CONFIRMATORY_MAGNITUDE,
-        "confirmatory_rel_threshold": 0.10,             # TODO(C1): prose-only in the contract
+        "confirmatory_rel_threshold": float(at["confirmatory_cell_rel_min"]),
         "ood_regimes": tuple(sp["heldout_greek_and_hedging"]),
         "ood_gamma_reduction_min": float(at["ood_gamma_rmse_reduction_min"]),
         "ood_vega_reduction_min": float(at["ood_vega_rmse_reduction_min"]),

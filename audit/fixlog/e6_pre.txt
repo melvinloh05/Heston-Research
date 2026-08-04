@@ -1,0 +1,12 @@
+        a contract NUMBER now (`acceptance_thresholds.confirmatory_cell_rel_min`), so
+        editing the YAML must move it. A copy of the contract with a different value
+        must produce that different value — a re-typed literal would not budge."""
+        doctored = dict(BM)
+        doctored["acceptance_thresholds"] = dict(_AT, confirmatory_cell_rel_min=0.42)
+>       assert hb.contract_thresholds(doctored)["confirmatory_rel_threshold"] == 0.42
+E       assert 0.1 == 0.42
+
+test_contract_thresholds.py:93: AssertionError
+=========================== short test summary info ============================
+FAILED test_contract_thresholds.py::test_confirmatory_rel_threshold_is_read_not_typed
+1 failed, 1 passed, 35 deselected in 1.33s

@@ -68,6 +68,7 @@ _EXPECTED = [
        ["compare_pilot_against"]),
     ("gate_clipped_frac_max",
      BM["oracle_headroom_gate"]["region_of_validity"]["clipped_frac_max"]),
+    ("confirmatory_rel_threshold", _AT["confirmatory_cell_rel_min"]),
     ("moneyness_wing_bounds",
      tuple(float(x) for x in BM["splits"]["moneyness_wing_holdout"]["moneyness_bounds"])),
     ("plateau_tol", BM["information_matching"]["plateau_tol"]),
@@ -80,6 +81,17 @@ _EXPECTED = [
 @pytest.mark.parametrize("key,expected", _EXPECTED, ids=[k for k, _ in _EXPECTED])
 def test_contract_thresholds_match_the_yaml(key, expected):
     assert TH[key] == expected
+
+
+def test_confirmatory_rel_threshold_is_read_not_typed():
+    """AM2-1 closes the last TODO(C1): the headline verdict's ">=10% relative" is
+    a contract NUMBER now (`acceptance_thresholds.confirmatory_cell_rel_min`), so
+    editing the YAML must move it. A copy of the contract with a different value
+    must produce that different value — a re-typed literal would not budge."""
+    doctored = dict(BM)
+    doctored["acceptance_thresholds"] = dict(_AT, confirmatory_cell_rel_min=0.42)
+    assert hb.contract_thresholds(doctored)["confirmatory_rel_threshold"] == 0.42
+    assert TH["confirmatory_rel_threshold"] == _AT["confirmatory_cell_rel_min"]
 
 
 def test_cvar_level_is_one_number_across_contract_and_engine():
