@@ -1,0 +1,15 @@
+                                 "method": method, "tc": 0.01, "seed": s,
+                                 "cvar": 1.0, "t_ex": ""})
+        ps = _write_csv(tmp_path / "ps.csv", rows, cols)
+        vd, grows = ar.goldilocks_bates(d, ps, n_boot=200, seed=1)
+        assert grows and not any(r["decisive"] for r in grows)
+>       assert vd["verdict"] == "no_decisive_regime" != "null"
+E       AssertionError: assert 'null' == 'no_decisive_regime'
+E         - no_decisive_regime
+E         + null
+
+test_analyze_results.py:750: AssertionError
+=========================== short test summary info ============================
+FAILED test_analyze_results.py::test_adjudicated_no_channel_is_not_the_not_evaluated_null
+FAILED test_analyze_results.py::test_goldilocks_no_decisive_regime_is_not_the_not_evaluated_null
+2 failed, 25 deselected in 0.32s

@@ -151,6 +151,38 @@ def test_ood_greek_verdict_flips_at_the_contract_price_parity(tmp_path):
     assert ar.ood_greek_thresholds(out)["verdict"] == "fail"
 
 
+def test_adjudicated_verdicts_are_the_contracts_vocabulary():
+    """AM2-2 + fix batch 3 ITEM 5: the strings the adjudicating verdicts emit ARE
+    `acceptance_thresholds.verdict_vocabulary`, and the universal not-evaluated
+    `null` is no longer one of them."""
+    vv = _AT["verdict_vocabulary"]
+    assert set(vv["universal"]) == {"null", "error"}
+
+    mech = set(vv["outcome_values"]["mechanism_adjudication"])
+    assert mech == {"channel_i", "channel_ii", "decomposition", "no_channel"}
+    assert "null" not in mech
+
+    def _g(tc, diff, lo, hi):
+        return {"tc": tc, "diff": diff, "ci_lo": lo, "ci_hi": hi}
+
+    patterns = [                                    # (i) / (ii) / both / neither
+        ([_g(0.0, -1.0, -1.5, -0.5), _g(0.02, -1.0, -1.5, -0.5)],
+         {"diff": -0.1, "ci_lo": -0.5, "ci_hi": 0.3}),
+        ([_g(0.0, -0.05, -0.2, 0.1), _g(0.02, -1.0, -1.4, -0.6)],
+         {"diff": -2.0, "ci_lo": -3.0, "ci_hi": -1.0}),
+        ([_g(0.0, -1.0, -1.5, -0.5), _g(0.02, -2.0, -2.5, -1.5)],
+         {"diff": -2.0, "ci_lo": -3.0, "ci_hi": -1.0}),
+        ([_g(0.0, -0.05, -0.2, 0.1), _g(0.02, -0.05, -0.2, 0.1)],
+         {"diff": -0.1, "ci_lo": -0.5, "ci_hi": 0.3}),
+    ]
+    got = {ar._mechanism_reading(gaps, tex)["reading"] for gaps, tex in patterns}
+    assert got == mech                              # every declared value reachable
+
+    gold = set(vv["outcome_values"]["goldilocks_bates"])
+    assert gold == {"decision_relevant_regime_located", "no_decisive_regime"}
+    assert "null" not in gold
+
+
 # ---------------------------------------------------------------------------
 # eval_greeks — the pre-check thresholds are the contract's and are consumed
 # ---------------------------------------------------------------------------

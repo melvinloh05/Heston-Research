@@ -810,11 +810,16 @@ def _mechanism_reading(gaps: list[dict], t_ex: dict) -> dict:
                  the improvement side) AND t_ex(rung3)-t_ex(std) < 0 with CI
                  excluding 0. t_ex unmoved (CI covers 0) KILLS channel_ii
                  regardless of PnL.
-      decomposition: both present. null: neither.
+      decomposition: both present. no_channel: neither.
+
+    `no_channel` is an ADJUDICATED outcome ("neither channel is present"), NOT the
+    universal `null` ("not evaluated") — the two used to share the string `null`,
+    which put a result and an absence in one column (contract
+    acceptance_thresholds.verdict_vocabulary.outcome_values.mechanism_adjudication).
 
     BOTH channels require the gap to be an IMPROVEMENT (audit A2): an arm that is
     significantly WORSE at 0% TC, or one that degrades FASTER as costs rise, is the
-    mirror image of the hypothesis and reads 'null' — a pre-registered null is
+    mirror image of the hypothesis and reads 'no_channel' — a pre-registered null is
     publishable, an affirmative mechanism claim built on a wrong-signed gap is not.
     """
     by_tc = {round(float(g["tc"]), 12): g for g in gaps}
@@ -833,7 +838,7 @@ def _mechanism_reading(gaps: list[dict], t_ex: dict) -> dict:
     elif present_ii:
         reading = "channel_ii"
     else:
-        reading = "null"
+        reading = "no_channel"
     return {"reading": reading, "present_i": present_i, "present_ii": present_ii,
             "widening": bool(widening), "t_ex_reduced": bool(t_ex_reduced)}
 
@@ -968,14 +973,20 @@ def goldilocks_bates(pnl_dir, per_seed_csv, *, thresholds: dict | None = None,
                      "ci_hi": p["ci_hi"], "decisive": decisive,
                      "n_seeds": p["n_seeds"]})
     decisive_rows = [r for r in rows if r["decisive"]]
-    verdict = "decision_relevant_regime_located" if decisive_rows else "null"
+    # rows present but none decisive is the pre-registered 'nowhere' ADJUDICATION;
+    # NO rows at all is not an adjudication, it is NOT EVALUATED (the universal
+    # `null`). The two used to share one string (contract verdict_vocabulary).
+    verdict = ("decision_relevant_regime_located" if decisive_rows
+               else "no_decisive_regime")
     if not rows:
         verdict = "null"
     best = min(rows, key=lambda r: r["diff"]) if rows else None
     where = ", ".join(f"(lam={r['lambda_j']}, sig={r['sigma_j']})" for r in decisive_rows)
-    notes = (f"{len(rows)} severity cells at tc={tc}; decisive (CI excludes 0): "
-             + (where if decisive_rows else "NONE — pre-registered 'nowhere' null "
-                "(not a failure; gap visibility is non-monotone by design)"))
+    notes = ("NOT EVALUATED: no bates severity cells found; " if not rows else "")
+    notes += (f"{len(rows)} severity cells at tc={tc}; decisive (CI excludes 0): "
+             + (where if decisive_rows else "NONE — the pre-registered 'nowhere' "
+                "adjudication `no_decisive_regime` (not a failure, and not the "
+                "universal `null`; gap visibility is non-monotone by design)"))
     stat = best["diff"] if best else float("nan")
     ci = (best["ci_lo"], best["ci_hi"]) if best else None
     return _verdict("goldilocks_bates", f"bates severity sweep tc={tc}", stat, ci,
@@ -1082,7 +1093,8 @@ def mechanism_memo(mech: dict, verdicts: list[dict], goldilocks_rows: list[dict]
           f"(present_i={reading.get('present_i')}, present_ii={reading.get('present_ii')}).",
           "  - channel_i  = robustness: gap present at tc=0 (CI excludes 0).",
           "  - channel_ii = cost: gap widens with tc AND T_ex reduced (CI excludes 0).",
-          "  - decomposition = both; null = neither."]
+          "  - decomposition = both; no_channel = neither (an ADJUDICATED "
+          "reading, distinct from the universal `null` = not evaluated)."]
 
     if goldilocks_rows:
         L += ["", "## Goldilocks (Bates severity sweep)", "",

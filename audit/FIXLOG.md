@@ -910,3 +910,73 @@ E       KeyError: 'in_region'
 **Post-fix (`audit/fixlog/e4_post.txt`).** `1 passed, 14 deselected in 3.63s`
 
 **Full suite after the commit: 251 passed.**
+
+---
+
+## ITEM 5 (E5) — `null` stopped meaning two incompatible things
+
+**The narrow YAML edit (the batch's one authorized contract change).** Exactly two lines of
+`heston_benchmark_v6.yaml`, both in `acceptance_thresholds.verdict_vocabulary.
+outcome_values`:
+
+```diff
+-      mechanism_adjudication: [channel_i, channel_ii, decomposition, "null"]   # `null` here is the ADJUDICATED no-channel reading, which coincides with the universal not-evaluated string; disambiguate via notes
+-      goldilocks_bates: [decision_relevant_regime_located, "null"]             # same coincidence; `null` = no decisive severity row located
++      mechanism_adjudication: [channel_i, channel_ii, decomposition, no_channel]   # `no_channel` is the ADJUDICATED "neither channel is present" reading; renamed from "null" (fix batch 3 ITEM 5) so it no longer collides with the universal not-evaluated string
++      goldilocks_bates: [decision_relevant_regime_located, no_decisive_regime]      # `no_decisive_regime` = severity rows present, none decisive; renamed from "null" for the same reason. NO rows at all is the universal `null` (not evaluated)
+```
+
+`git diff main..HEAD -- '*.yaml'` is exactly these two lines: **2 insertions, 2 deletions,
+one file**. The `universal` pair, `must_not_collapse`, `yaml_note` and every other threshold's
+outcome set are untouched. Each line's trailing comment moved WITH its string, because the old
+comments documented the collision this item removes — a comment describing a collision that no
+longer exists would be a false statement inside the frozen pre-registration. If that reading
+of "only those strings" is too liberal, the comment halves are the only revertible part.
+
+**Code diff.**
+- `_mechanism_reading`: the fall-through reading `"null"` -> `"no_channel"`. This is also the
+  value A2's wrong-direction gaps land on (a significantly WORSE arm, or one degrading faster
+  with TC), which is exactly what `no_channel` means there.
+- `goldilocks_bates`: rows present but none decisive -> `"no_decisive_regime"`. **No rows at
+  all still returns `"null"`** — that case is NOT an adjudication, it is not-evaluated, and
+  the notes now say so ("NOT EVALUATED: no bates severity cells found").
+- `mechanism_memo`'s legend line: "decomposition = both; no_channel = neither (an ADJUDICATED
+  reading, distinct from the universal `null` = not evaluated)".
+- Consumers checked: `analyze_results` (the two emitters, `_verdict`, `run_analysis`'s
+  `_guard`/absent-artifact rows — all remaining `"null"`s are not-evaluated cases and stay),
+  `mechanism_memo` (renders the string verbatim; legend updated), `exhibits.py` (names
+  `threshold_verdicts.csv` in its module docstring only — no exhibit branches on a verdict
+  string, so nothing to change), and every test asserting on the old strings.
+
+**Tests.** New: `test_adjudicated_no_channel_is_not_the_not_evaluated_null` and
+`test_goldilocks_no_decisive_regime_is_not_the_not_evaluated_null` (each builds a genuine
+adjudication AND the not-evaluated row of the SAME threshold, and asserts the two strings
+differ and that the adjudicated one is not `"null"`), plus
+`test_contract_thresholds.py::test_adjudicated_verdicts_are_the_contracts_vocabulary`, which
+binds the emitted strings to the contract's `outcome_values` sets in both directions (every
+declared value is reachable from `_mechanism_reading`, and `"null"` is in neither set).
+
+**One deviation from the item as written.** The item asks that the not-evaluated mechanism
+row also not be `"null"`. It is `"null"`, deliberately: `null` IS the universal not-evaluated
+value the amendment declares (`verdict_vocabulary.universal`), and renaming that would undo
+AM2-2. What the tests assert is the property the item exists to protect — the adjudicated
+result and the not-evaluated row are DIFFERENT strings, and the adjudicated one is no longer
+`null`.
+
+**Five pre-existing assertions edited** (unavoidable: the fix changes the string the
+assertion names): four `reading == "null"` in `test_mechanism_*` and one
+`verdict == "null"` in `test_goldilocks_locates_and_null`. Every one of them keeps its
+substantive check; only the expected string moved.
+
+**Pre-fix (`audit/fixlog/e5_pre.txt`).**
+```
+>       assert vd["verdict"] == "no_decisive_regime" != "null"
+E       AssertionError: assert 'null' == 'no_decisive_regime'
+E         - no_decisive_regime
+E         + null
+2 failed, 25 deselected in 0.32s
+```
+
+**Post-fix (`audit/fixlog/e5_post.txt`).** `2 passed, 25 deselected in 0.32s`
+
+**Full suite after the commit: 254 passed.**

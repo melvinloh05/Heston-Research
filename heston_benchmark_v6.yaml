@@ -401,8 +401,8 @@ acceptance_thresholds:
       ood_greek_thresholds: [pass, fail]      # fail = honest null
       dose_response: [monotone, flat]         # flat = "monotonicity not demonstrated" (see dose_response.interpretation), NOT "is flat"
       sakuma_null_consistency: [consistent, flag]   # consistency check, NOT pass/fail (see in_model_hedging)
-      mechanism_adjudication: [channel_i, channel_ii, decomposition, "null"]   # `null` here is the ADJUDICATED no-channel reading, which coincides with the universal not-evaluated string; disambiguate via notes
-      goldilocks_bates: [decision_relevant_regime_located, "null"]             # same coincidence; `null` = no decisive severity row located
+      mechanism_adjudication: [channel_i, channel_ii, decomposition, no_channel]   # `no_channel` is the ADJUDICATED "neither channel is present" reading; renamed from "null" (fix batch 3 ITEM 5) so it no longer collides with the universal not-evaluated string
+      goldilocks_bates: [decision_relevant_regime_located, no_decisive_regime]      # `no_decisive_regime` = severity rows present, none decisive; renamed from "null" for the same reason. NO rows at all is the universal `null` (not evaluated)
     must_not_collapse: >
       `null` and `error` must NEVER be merged in any table, memo or figure. "Not evaluated"
       and "evaluation broke" are different states, and only the first is a legitimate

@@ -10,7 +10,7 @@ per-seed metric CSVs, and the P11 Greek-agg CSV — then checks that
     pass/fail/null inputs and never throws on blank ('') cells,
   * the dose-response x-axis orders shuffled > sigma_050 > sigma_000 == 0 and the
     isotonic + Spearman fit runs end to end,
-  * the four constructed mechanism patterns map to (i)/(ii)/decomposition/null.
+  * the four constructed mechanism patterns map to (i)/(ii)/decomposition/no_channel.
 
 The one place a real config is touched is build_arm_labels via the arm PINNConfig
 (pinn_config.yaml) in the dose-response x-axis test — that IS the axis under test.
@@ -541,11 +541,11 @@ def test_mechanism_reading_four_patterns():
         _tex(-2.0, -3.0, -1.0))
     assert dec["reading"] == "decomposition"
 
-    # neither -> null
+    # neither -> no_channel (the ADJUDICATED reading; `null` = not evaluated)
     nul = ar._mechanism_reading(
         [_gap(0.0, -0.05, -0.2, 0.1), _gap(0.02, -0.05, -0.2, 0.1)],
         _tex(-0.1, -0.5, 0.3))
-    assert nul["reading"] == "null"
+    assert nul["reading"] == "no_channel"
 
 
 def test_mechanism_wrong_direction_gap_is_not_a_channel():
@@ -558,14 +558,14 @@ def test_mechanism_wrong_direction_gap_is_not_a_channel():
     worse_i = ar._mechanism_reading(
         [_gap(0.0, +1.0, +0.5, +1.5), _gap(0.02, +1.0, +0.5, +1.5)],
         _tex(-0.1, -0.5, 0.3))
-    assert worse_i["reading"] == "null" and worse_i["present_i"] is False
+    assert worse_i["reading"] == "no_channel" and worse_i["present_i"] is False
 
     # (ii)-shaped but wrong-signed: gap grows in MAGNITUDE with tc while rung3 is
     # worse at every tier, and rung3 trades less -> must NOT read as the cost channel
     worse_ii = ar._mechanism_reading(
         [_gap(0.0, +0.05, -0.1, +0.2), _gap(0.02, +1.0, +0.6, +1.4)],
         _tex(-2.0, -3.0, -1.0))
-    assert worse_ii["reading"] == "null"
+    assert worse_ii["reading"] == "no_channel"
     assert worse_ii["present_ii"] is False and worse_ii["widening"] is False
 
     # a gap that SHRINKS toward zero as tc rises is not widening either
@@ -584,11 +584,12 @@ def test_mechanism_wrong_direction_gap_is_not_a_channel():
 
 
 def test_mechanism_t_ex_unmoved_kills_channel_ii():
-    """Cost PnL pattern but T_ex CI covers 0 -> channel_ii rejected, falls to null."""
+    """Cost PnL pattern but T_ex CI covers 0 -> channel_ii rejected, falls to
+    no_channel (the adjudicated reading, NOT the not-evaluated `null`)."""
     r = ar._mechanism_reading(
         [_gap(0.0, -0.05, -0.2, 0.1), _gap(0.02, -1.0, -1.4, -0.6)],
         _tex(-2.0, -3.0, 0.5))                           # T_ex CI covers 0
-    assert r["reading"] == "null" and r["present_ii"] is False
+    assert r["reading"] == "no_channel" and r["present_ii"] is False
 
 
 def test_mechanism_adjudication_assembles_from_npz(tmp_path):
@@ -661,7 +662,8 @@ def test_goldilocks_locates_and_null(tmp_path):
     assert vd["verdict"] == "decision_relevant_regime_located"
     assert any(r["decisive"] for r in grows) and len(grows) == 2
 
-    # all cells indistinct -> pre-registered 'nowhere' null
+    # all cells indistinct -> pre-registered 'nowhere' adjudication (NOT `null`,
+    # which is reserved for "not evaluated"; ITEM 5)
     d2 = tmp_path / "pnl2"
     rows2 = []
     for lam, sj in ((0.0, 0.05), (0.25, 0.10)):
@@ -676,7 +678,85 @@ def test_goldilocks_locates_and_null(tmp_path):
                               "cvar": 1.0, "t_ex": ""})
     ps2 = _write_csv(tmp_path / "ps2.csv", rows2, cols)
     vn, _ = ar.goldilocks_bates(d2, ps2, n_boot=300, seed=1)
-    assert vn["verdict"] == "null"
+    assert vn["verdict"] == "no_decisive_regime"
+
+
+def test_adjudicated_no_channel_is_not_the_not_evaluated_null(tmp_path):
+    """ITEM 5: `null` used to mean two incompatible things in the mechanism row —
+    the ADJUDICATED "no channel is present" reading AND the universal "not
+    evaluated". They are now different strings.
+
+    The universal `null` (contract acceptance_thresholds.verdict_vocabulary.
+    universal) is UNCHANGED and still means not-evaluated; what moved is the
+    adjudicated outcome, which is now `no_channel`."""
+    # (a) a genuine adjudication with neither channel present
+    neither = ar._mechanism_reading(
+        [_gap(0.0, -0.05, -0.2, 0.1), _gap(0.02, -0.05, -0.2, 0.1)],
+        _tex(-0.1, -0.5, 0.3))
+    assert neither["reading"] == "no_channel"
+
+    # ... and it survives into the verdict row the memo and the CSV read
+    d = tmp_path / "pnl"
+    rng = np.random.default_rng(17)
+    cols = ["direction", "magnitude", "sweep", "in_model", "lambda_j", "sigma_j",
+            "method", "tc", "seed", "cvar", "t_ex"]
+    ps_rows = []
+    for s in range(5):
+        b = -np.abs(rng.normal(0, 2, 800))
+        cell = {}
+        for tc in (0.0, 0.01, 0.02):                 # identical arms -> no channel
+            cell[ar._pnl_key("rung3", tc)] = b
+            cell[ar._pnl_key("standard_pinn", tc)] = b
+        _write_cell(d, s, _misspec_tag(1.0), cell)
+        for method in ("rung3", "standard_pinn"):
+            for tc in (0.0, 0.01, 0.02):
+                ps_rows.append({"direction": "combined", "magnitude": 1.0,
+                                "sweep": "perturbation", "in_model": False,
+                                "lambda_j": "", "sigma_j": "", "method": method,
+                                "tc": tc, "seed": s, "cvar": 1.0, "t_ex": 1.0})
+    ps = _write_csv(tmp_path / "ps.csv", ps_rows, cols)
+    adjudicated = ar.mechanism_adjudication(d, ps, n_boot=200, seed=3)
+    assert adjudicated["verdict"] == "no_channel"
+
+    # (b) the SAME threshold, not evaluated at all: the universal null
+    not_evaluated = ar._failure_verdict(
+        FileNotFoundError("missing"), "mechanism_adjudication", "combined m=1.0")
+    assert not_evaluated["verdict"] == "null"
+
+    # (c) the two are distinguishable without reading the notes column
+    assert adjudicated["verdict"] != not_evaluated["verdict"]
+    assert adjudicated["verdict"] != "null"
+
+
+def test_goldilocks_no_decisive_regime_is_not_the_not_evaluated_null(tmp_path):
+    """Same split for the second colliding threshold: rows present but none
+    decisive is the pre-registered 'nowhere' ADJUDICATION (`no_decisive_regime`);
+    no severity rows at all is NOT EVALUATED (`null`)."""
+    d = tmp_path / "pnl"
+    cols = ["direction", "magnitude", "sweep", "in_model", "lambda_j", "sigma_j",
+            "method", "tc", "seed", "cvar", "t_ex"]
+    rows = []
+    for lam, sj in ((0.0, 0.05), (0.25, 0.10)):
+        for s in range(4):
+            b = -np.abs(np.random.default_rng([s, 9]).normal(0, 2, 700))
+            _write_cell(d, s, _bates_tag(lam, sj),
+                        {"rung3__tc0.01": b, "standard_pinn__tc0.01": b})
+            for method in ("rung3", "standard_pinn"):
+                rows.append({"direction": "", "magnitude": "", "sweep": "bates",
+                             "in_model": "", "lambda_j": lam, "sigma_j": sj,
+                             "method": method, "tc": 0.01, "seed": s,
+                             "cvar": 1.0, "t_ex": ""})
+    ps = _write_csv(tmp_path / "ps.csv", rows, cols)
+    vd, grows = ar.goldilocks_bates(d, ps, n_boot=200, seed=1)
+    assert grows and not any(r["decisive"] for r in grows)
+    assert vd["verdict"] == "no_decisive_regime" != "null"
+
+    # no bates rows at all -> nothing was adjudicated
+    empty = _write_csv(tmp_path / "ps_empty.csv", [], cols)
+    vn, grows_n = ar.goldilocks_bates(tmp_path / "pnl_absent", empty,
+                                      n_boot=200, seed=1)
+    assert grows_n == [] and vn["verdict"] == "null"
+    assert vn["verdict"] != vd["verdict"]
 
 
 def test_run_analysis_writes_outputs_and_degrades(tmp_path):
