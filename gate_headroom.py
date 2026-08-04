@@ -619,6 +619,12 @@ def run_gate(cfg: dict, sigma_rel_list: tuple | None = None,
                         _pilot_comparison(cfg, float(sigma_gamma_abs),
                                           eff_by_arm["pilot"],
                                           noisy_by_arm["pilot"].clipped_fraction))
+    # AM2-3c: a pilot outside the region of validity overrides EVERY tier's
+    # decision with INCONCLUSIVE — never with None, which already means "no arm
+    # cleared the threshold" and reads as a no-go.
+    if pilot_comparison is not None and not pilot_comparison["in_region"]:
+        entry = _inconclusive(pilot_comparison)
+        decision = {tc: entry for tc in tiers}
 
     os.makedirs(out_dir, exist_ok=True)
     csv_path = hb.write_rows_csv(records, os.path.join(out_dir, "headroom.csv"))
@@ -645,14 +651,59 @@ def _pilot_comparison(cfg: dict, sigma_gamma_abs: float, eff: dict,
     sigma_gamma_pilot is a GAMMA rmse; `sigma_gamma_effective` is the post-clip
     gamma scale, and it is the only one of the two effective quantities in the
     same units. The field name is read from the contract rather than assumed, so
-    a human who re-decides that key moves this comparison with it."""
-    field = hb.contract_thresholds(cfg)["gate_compare_pilot_against"]
+    a human who re-decides that key moves this comparison with it.
+
+    The comparison also carries the REGION-OF-VALIDITY test (AM2-3c): the region
+    is declared in terms of `clipped_frac`, so a pilot whose delivered corruption
+    clips on more than `region_of_validity.clipped_frac_max` of its delta
+    evaluations sits where spread can no longer be mapped back to sigma. That
+    makes the gate INCONCLUSIVE — see `_inconclusive`."""
+    th = hb.contract_thresholds(cfg)
+    field = th["gate_compare_pilot_against"]
+    frac_max = float(th["gate_clipped_frac_max"])
+    frac = float(clipped_frac)
     return {"compare_against": field,
             "nominal": float(sigma_gamma_abs),
             "effective": float(eff[field]),
             "sigma_delta_effective": float(eff["sigma_delta_effective"]),
             "sigma_gamma_effective": float(eff["sigma_gamma_effective"]),
-            "clipped_frac": float(clipped_frac)}
+            "clipped_frac": frac,
+            "clipped_frac_max": frac_max,
+            "in_region": bool(np.isfinite(frac) and frac <= frac_max)}
+
+
+def _inconclusive(pc: dict) -> dict:
+    """The DECISION entry for a pilot outside the region of validity (AM2-3c).
+
+    NOT `None`: `None` is the gate's existing "no swept arm cleared the
+    threshold", which reads as a no-go. An inconclusive gate is neither a pass
+    nor a no-go — it does not authorize training spend and it does not refuse
+    it; the ladder and the clause have to be revisited first."""
+    return {
+        "inconclusive": True,
+        "reason": (
+            f"pilot arm clipped_frac = {pc['clipped_frac']:.4f} exceeds "
+            f"region_of_validity.clipped_frac_max = {pc['clipped_frac_max']}: "
+            f"the delivered corruption ({pc['compare_against']} = "
+            f"{pc['effective']:.6g} against a nominal {pc['nominal']:.6g}) is "
+            "dominated by the delta clip rather than by the calibrated field, "
+            "so this spread cannot be mapped back to a sigma. The gate is "
+            "INCONCLUSIVE — neither a pass nor a no-go. It does not authorize "
+            "training spend and must not be read as a failed gate; the ladder "
+            "(and this clause) must be revisited before any go decision."),
+        "pilot_comparison": pc}
+
+
+def decision_status(entry) -> str:
+    """Classify one DECISION entry into the THREE readings it can carry:
+    `no_arm_cleared` (None — no swept arm met the threshold), `inconclusive`
+    (AM2-3c: the pilot is outside the region of validity), or `cleared` (a
+    summary row met the threshold with every seed's CI excluding 0)."""
+    if entry is None:
+        return "no_arm_cleared"
+    if entry.get("inconclusive"):
+        return "inconclusive"
+    return "cleared"
 
 
 def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
@@ -722,7 +773,11 @@ def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
             f"compare_pilot_against`): **{pc['effective']:.6g}**",
             f"- sigma_delta_effective (delta units, NOT the comparison target): "
             f"{pc['sigma_delta_effective']:.6g}",
-            f"- clipped_frac on the pilot arm: {pc['clipped_frac']:.4f}",
+            f"- clipped_frac on the pilot arm: {pc['clipped_frac']:.4f} "
+            f"(region_of_validity.clipped_frac_max = {pc['clipped_frac_max']})",
+            f"- region of validity: "
+            + ("**INSIDE** — the spread maps back to a sigma" if pc["in_region"]
+               else "**OUTSIDE** — the gate reads INCONCLUSIVE (AM2-3c)"),
         ]
     lines += [
         "",
@@ -741,11 +796,23 @@ def _write_report(path: str, cfg: dict, mode: str, rms: float, arms: list,
     ]
     for tc in tiers:
         hit = decision[tc]
-        lines.append(
-            f"- tc = {tc}: "
-            + (f"sigma_rel = {hit['sigma_rel']:.4g} "
-               f"(sigma_gamma = {hit['sigma_gamma_abs']:.4g})" if hit
-               else "NONE — no swept noise level clears the threshold"))
+        status = decision_status(hit)
+        if status == "inconclusive":
+            body = f"**INCONCLUSIVE** — {hit['reason']}"
+        elif status == "no_arm_cleared":
+            body = "NONE — no swept noise level clears the threshold"
+        else:
+            body = (f"sigma_rel = {hit['sigma_rel']:.4g} "
+                    f"(sigma_gamma = {hit['sigma_gamma_abs']:.4g})")
+        lines.append(f"- tc = {tc}: " + body)
+    lines += [
+        "",
+        "The three readings are DISTINCT and must stay distinct: a cleared rung,",
+        "`NONE` (no swept arm cleared the threshold — a no-go reading), and",
+        "`INCONCLUSIVE` (the pilot sits outside `region_of_validity`, so the",
+        "measurement cannot be mapped back to a sigma at all: neither a pass nor",
+        "a no-go, and it authorizes no training spend).",
+    ]
     lines += [
         "",
         "The go/no-go is a HUMAN decision, not this script's (contract",

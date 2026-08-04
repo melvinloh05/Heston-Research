@@ -1,0 +1,12 @@
+        out_a = tempfile.mkdtemp()
+        res = gh.run_gate(cfg, mode="field", out_dir=out_a, n_cloud_states=500,
+                          n_cloud_paths=96, sigma_gamma_abs=3.0 * _RMS,
+                          spread_threshold_rel=-1e9)
+        assert res["pilot_comparison"]["clipped_frac"] > frac_max
+>       assert res["pilot_comparison"]["in_region"] is False
+E       KeyError: 'in_region'
+
+test_gate_headroom.py:367: KeyError
+=========================== short test summary info ============================
+FAILED test_gate_headroom.py::test_pilot_outside_the_region_of_validity_is_inconclusive
+1 failed, 14 deselected in 2.35s

@@ -870,3 +870,43 @@ clip and the ladder are untouched, `_CLIPPED_NOTE` gained the measured caveat, a
 the suite. **The contract-side consequence is the human's call (see "Open for the human").**
 
 **Full suite after the commit: 249 passed.**
+
+---
+
+## ITEM 4 (E4) — a pilot outside the region of validity is INCONCLUSIVE, not None
+
+**Diff summary.**
+- `contract_thresholds["gate_clipped_frac_max"]` (new, parity-tested) from
+  `oracle_headroom_gate.region_of_validity.clipped_frac_max`.
+- `_pilot_comparison` gained `clipped_frac_max` and `in_region`. The region is DECLARED in
+  terms of `clipped_frac` (AM2-3c `statistic: clipped_frac`), so that is the test: the pilot
+  arm's own clipped fraction over its hedging life vs the contract bound.
+- `_inconclusive(pc)` (new) builds the DECISION entry: `{"inconclusive": True, "reason":
+  ..., "pilot_comparison": ...}` where the reason names the measured `clipped_frac`, the
+  bound it exceeded, the delivered vs nominal sigma, and states in words that the gate is
+  neither a pass nor a no-go, authorizes no training spend, and forces the ladder and the
+  clause to be revisited.
+- `run_gate`: when the pilot is out of region, EVERY tier's decision becomes that entry.
+  `None` is left alone to mean exactly what it meant before — no swept arm cleared the
+  threshold.
+- `decision_status(entry)` (new, public): the three readings a DECISION entry can carry —
+  `no_arm_cleared` / `inconclusive` / `cleared`. The report renders all three distinctly and
+  closes with a paragraph saying they must stay distinct.
+
+**Test.** `test_pilot_outside_the_region_of_validity_is_inconclusive`: (a) a 3x-rms pilot
+clips past `clipped_frac_max`, and at EVERY tier the decision is not None, carries
+`inconclusive=True`, and its reason names both `clipped_frac` and the bound; (b) an in-region
+pilot with an unreachable threshold still yields the plain `None`; (c) the three statuses are
+three distinct strings, so a reader (or a downstream table) cannot conflate a no-go with an
+inconclusive.
+
+**Pre-fix (`audit/fixlog/e4_pre.txt`).**
+```
+>       assert res["pilot_comparison"]["in_region"] is False
+E       KeyError: 'in_region'
+1 failed, 14 deselected in 2.35s
+```
+
+**Post-fix (`audit/fixlog/e4_post.txt`).** `1 passed, 14 deselected in 3.63s`
+
+**Full suite after the commit: 251 passed.**

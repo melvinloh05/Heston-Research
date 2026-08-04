@@ -138,6 +138,10 @@ def contract_thresholds(cfg: dict) -> dict:
         "gate_compare_pilot_against": str(
             bm["oracle_headroom_gate"]["effective_sigma_reporting"]
               ["compare_pilot_against"]),
+        # AM2-3c: above this clipped fraction the gate's spread -> sigma mapping
+        # means nothing, so a pilot landing there is INCONCLUSIVE, not a no-go.
+        "gate_clipped_frac_max": float(
+            bm["oracle_headroom_gate"]["region_of_validity"]["clipped_frac_max"]),
         "moneyness_wing_bounds":
             tuple(float(x) for x in sp["moneyness_wing_holdout"]["moneyness_bounds"]),
         "plateau_tol": float(bm["information_matching"]["plateau_tol"]),

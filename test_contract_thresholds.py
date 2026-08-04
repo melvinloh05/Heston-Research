@@ -66,6 +66,8 @@ _EXPECTED = [
     ("gate_compare_pilot_against",
      BM["oracle_headroom_gate"]["effective_sigma_reporting"]
        ["compare_pilot_against"]),
+    ("gate_clipped_frac_max",
+     BM["oracle_headroom_gate"]["region_of_validity"]["clipped_frac_max"]),
     ("moneyness_wing_bounds",
      tuple(float(x) for x in BM["splits"]["moneyness_wing_holdout"]["moneyness_bounds"])),
     ("plateau_tol", BM["information_matching"]["plateau_tol"]),

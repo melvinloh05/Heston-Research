@@ -349,6 +349,48 @@ def test_pilot_is_compared_against_sigma_gamma_effective():
     assert "sigma_gamma_effective" in Path(res["report_path"]).read_text()
 
 
+def test_pilot_outside_the_region_of_validity_is_inconclusive():
+    """AM2-3c `region_of_validity.if_pilot_outside`: a pilot whose delivered
+    corruption sits above `clipped_frac_max` makes the gate INCONCLUSIVE —
+    explicitly neither a pass nor a no-go. It must be DISTINCT from `None`,
+    which means "no arm cleared the threshold" (a no-go reading)."""
+    frac_max = float(_BM["oracle_headroom_gate"]["region_of_validity"]
+                     ["clipped_frac_max"])
+    cfg = _cfg(n_paths=96, freq=252)
+
+    # (a) OUTSIDE the region: 3x rms(Gamma) clips almost everywhere
+    out_a = tempfile.mkdtemp()
+    res = gh.run_gate(cfg, mode="field", out_dir=out_a, n_cloud_states=500,
+                      n_cloud_paths=96, sigma_gamma_abs=3.0 * _RMS,
+                      spread_threshold_rel=-1e9)
+    assert res["pilot_comparison"]["clipped_frac"] > frac_max
+    assert res["pilot_comparison"]["in_region"] is False
+    for tc, hit in res["decision"].items():
+        assert hit is not None, f"tc={tc}: inconclusive collapsed to None"
+        assert hit.get("inconclusive") is True
+        assert gh.decision_status(hit) == "inconclusive"
+        assert "clipped_frac" in hit["reason"] and str(frac_max) in hit["reason"]
+    report = Path(res["report_path"]).read_text()
+    assert "INCONCLUSIVE" in report
+    assert "neither a pass nor a no-go" in report
+
+    # (b) INSIDE the region, nothing clears: the pre-existing None, unchanged
+    out_b = tempfile.mkdtemp()
+    res_b = gh.run_gate(cfg, mode="field", out_dir=out_b, n_cloud_states=500,
+                        n_cloud_paths=96, sigma_gamma_abs=0.05 * _RMS,
+                        spread_threshold_rel=1e9)
+    assert res_b["pilot_comparison"]["in_region"] is True
+    assert all(v is None for v in res_b["decision"].values())
+    assert all(gh.decision_status(v) == "no_arm_cleared"
+               for v in res_b["decision"].values())
+
+    # (c) the three states are three different readings, not two
+    cleared = {"arm": "s0.1", "sigma_rel": 0.1, "sigma_gamma_abs": 1.0}
+    assert gh.decision_status(cleared) == "cleared"
+    assert len({gh.decision_status(x) for x in
+                (cleared, None, {"inconclusive": True, "reason": "x"})}) == 3
+
+
 if __name__ == "__main__":
     for fn in sorted(k for k in dir() if k.startswith("test_")):
         globals()[fn]()
