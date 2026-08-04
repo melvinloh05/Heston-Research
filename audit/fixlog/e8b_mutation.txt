@@ -1,0 +1,52 @@
+==============================================================
+MUTATION: hedging_simulation.confirmatory_cell.perturbation: combined -> xi_only  (guards analyze_results._MISSPEC_FILTER)
+--------------------------------------------------------------
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+E         + combined
+
+test_contract_thresholds.py:123: AssertionError
+=============================== warnings summary ===============================
+test_contract_thresholds.py::test_gate_decision_threshold_is_the_contract_value_and_is_consumed
+  /Users/melvin/Documents/Heston Research/gate_headroom.py:430: RuntimeWarning: gate ladder OVERRIDE: [0.4] are declared DIAGNOSTIC-ONLY by oracle_headroom_gate.sigma_rel_ladder.diagnostic but were passed as swept decision rungs; the DECISION scan may fire on a rung the contract demoted. Pass them via sigma_rel_diagnostic instead.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test_contract_thresholds.py::test_analyze_results_confirmatory_cell_filter_is_the_contract_cell
+1 failed, 37 passed, 1 warning in 4.80s
+
+==============================================================
+MUTATION: splits.moneyness_wing_holdout.moneyness_bounds: 0.75 -> 0.70  (guards eval_greeks.WING_LO/WING_HI)
+--------------------------------------------------------------
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+E         Use -v to get more diff
+
+test_contract_thresholds.py:246: AssertionError
+=============================== warnings summary ===============================
+test_contract_thresholds.py::test_gate_decision_threshold_is_the_contract_value_and_is_consumed
+  /Users/melvin/Documents/Heston Research/gate_headroom.py:430: RuntimeWarning: gate ladder OVERRIDE: [0.4] are declared DIAGNOSTIC-ONLY by oracle_headroom_gate.sigma_rel_ladder.diagnostic but were passed as swept decision rungs; the DECISION scan may fire on a rung the contract demoted. Pass them via sigma_rel_diagnostic instead.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test_contract_thresholds.py::test_eval_greeks_wing_bounds_match_the_contract
+1 failed, 37 passed, 1 warning in 4.42s
+
+==============================================================
+MUTATION: information_matching.plateau_tol: 0.02 -> 0.03  (guards run_info_matching.PLATEAU_TOL)
+--------------------------------------------------------------
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+E        +  where 0.02 = rim.PLATEAU_TOL
+
+test_contract_thresholds.py:288: AssertionError
+=============================== warnings summary ===============================
+test_contract_thresholds.py::test_gate_decision_threshold_is_the_contract_value_and_is_consumed
+  /Users/melvin/Documents/Heston Research/gate_headroom.py:430: RuntimeWarning: gate ladder OVERRIDE: [0.4] are declared DIAGNOSTIC-ONLY by oracle_headroom_gate.sigma_rel_ladder.diagnostic but were passed as swept decision rungs; the DECISION scan may fire on a rung the contract demoted. Pass them via sigma_rel_diagnostic instead.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test_contract_thresholds.py::test_plateau_tol_matches_the_contract - a...
+1 failed, 37 passed, 1 warning in 4.62s
+
+FINAL YAML DIFF vs HEAD (must be empty):

@@ -1,0 +1,12 @@
+        nothing tests a header. The names are now contract-neutral."""
+>       assert not any(any(ch.isdigit() for ch in c) for c in eg.THRESHOLD_COLS), (
+            "a threshold_precheck header carries a number; it will lie after the next "
+            "contract edit")
+E       AssertionError: a threshold_precheck header carries a number; it will lie after the next contract edit
+E       assert not True
+E        +  where True = any(<generator object test_threshold_precheck_headers_do_not_hard_code_contract_numbers.<locals>.<genexpr> at 0x1066e4e40>)
+
+test_contract_thresholds.py:233: AssertionError
+=========================== short test summary info ============================
+FAILED test_contract_thresholds.py::test_threshold_precheck_headers_do_not_hard_code_contract_numbers
+1 failed, 37 deselected in 1.47s

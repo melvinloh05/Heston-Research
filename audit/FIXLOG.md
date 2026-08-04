@@ -1099,3 +1099,64 @@ trained.)
 **Post-fix (`audit/fixlog/e7_post.txt`).** `2 passed, 13 deselected, 1 warning in 1.67s`
 
 **Full suite after the commit: 258 passed.**
+
+---
+
+## ITEM 8 (E8) — the two remaining addendum scope calls
+
+### 8(a) `threshold_precheck.csv` headers — RENAMED (and the pre-existing test updated)
+
+**Which and why.** Renamed, not annotated. `gamma_ge_0.15` / `vega_ge_0.15` /
+`price_parity_within_0.10` became `gamma_ge_min` / `vega_ge_min` /
+`price_parity_within_tol`. The alternative — keep the numeric names and assert they match
+the contract — would keep a header that must be edited by hand every time the contract moves,
+and an assertion that FAILS on a legitimate contract edit is a tripwire on the wrong person:
+the human editing the YAML did nothing wrong, and the fix they would be forced into is this
+rename anyway. The numbers have a home already (they are read from `thresholds`, printed
+above the pre-check table, and parity-tested), so the header does not need to carry them.
+
+Batch 2's precedent for documenting a pre-existing test edit applies:
+`test_eval_greeks.py::test_threshold_precheck_present_for_ladder_arms` asserted on the three
+old keys and now asserts on the new ones, with the rename recorded in a comment at the site.
+Its substantive check — `pass` equals the conjunction of the three booleans — is unchanged.
+
+**Test.** `test_contract_thresholds.py::test_threshold_precheck_headers_do_not_hard_code_contract_numbers`:
+no column of `THRESHOLD_COLS` may contain a DIGIT, the three new names are present, and the
+emitted row's key set equals the header set. A header can no longer drift from its value,
+because it no longer states one.
+
+**Pre-fix (`audit/fixlog/e8a_pre.txt`).**
+```
+E       AssertionError: a threshold_precheck header carries a number; it will lie after the next contract edit
+1 failed, 37 deselected in 1.47s
+```
+**Post-fix (`audit/fixlog/e8a_post.txt`).** `1 passed, 37 deselected`
+
+### 8(b) `_MISSPEC_FILTER` / `WING_LO`-`WING_HI` / `PLATEAU_TOL` — guard VERIFIED, all three
+
+Each of the three contract values was deliberately mutated in `heston_benchmark_v6.yaml`, the
+parity suite run against the mutation, and the file restored. Full transcript:
+`audit/fixlog/e8b_mutation.txt`.
+
+| mutation | caught by | result |
+|---|---|---|
+| `hedging_simulation.confirmatory_cell.perturbation: combined -> xi_only` | `test_analyze_results_confirmatory_cell_filter_is_the_contract_cell` | **FAILED** (1 failed, 37 passed) |
+| `splits.moneyness_wing_holdout.moneyness_bounds: 0.75 -> 0.70` | `test_eval_greeks_wing_bounds_match_the_contract` | **FAILED** (1 failed, 37 passed) |
+| `information_matching.plateau_tol: 0.02 -> 0.03` | `test_plateau_tol_matches_the_contract` | **FAILED** (1 failed, 37 passed) |
+
+**The guard is real for all three; nothing needed threading.** Each mutation failed exactly
+one test, named the module constant, and no other test moved — so the guard is specific as
+well as sensitive.
+
+**One thing worth knowing about WHICH assertion fires.** It is never the parametrized
+`test_contract_thresholds_match_the_yaml` row: that compares `contract_thresholds(...)`
+against a value navigated out of the SAME (mutated) YAML, so the two move together by
+construction. It catches a helper that stops reading the contract. What catches a module
+CONSTANT that has drifted from the contract is the dedicated constant-vs-contract assertion
+in each case — a different guard for a different failure mode, and 8(b) verified the second
+one.
+
+**The contract file was restored after every mutation**; `git status` on
+`heston_benchmark_v6.yaml` is clean and the final line of the transcript shows an empty diff.
+
+**Full suite after the commit: 259 passed.**

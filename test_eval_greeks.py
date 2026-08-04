@@ -297,5 +297,8 @@ def test_threshold_precheck_present_for_ladder_arms(result):
                    for arm in ("rung2", "rung3")}
     for r in rows:                                              # booleans + a pass verdict
         assert isinstance(r["pass"], bool)
-        assert r["pass"] == (r["gamma_ge_0.15"] and r["vega_ge_0.15"]
-                             and r["price_parity_within_0.10"])
+        # columns renamed off the contract's numbers in fix batch 3 ITEM 8(a):
+        # gamma_ge_0.15 -> gamma_ge_min, vega_ge_0.15 -> vega_ge_min,
+        # price_parity_within_0.10 -> price_parity_within_tol
+        assert r["pass"] == (r["gamma_ge_min"] and r["vega_ge_min"]
+                             and r["price_parity_within_tol"])

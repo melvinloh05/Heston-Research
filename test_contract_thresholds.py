@@ -224,6 +224,24 @@ def test_eval_greeks_precheck_uses_the_contract_thresholds():
     assert not any(r["pass"] for r in parity_out)
 
 
+def test_threshold_precheck_headers_do_not_hard_code_contract_numbers():
+    """N1 / ITEM 8(a): the boolean columns of `threshold_precheck.csv` used to be
+    named `gamma_ge_0.15`, `vega_ge_0.15`, `price_parity_within_0.10`. Their VALUES
+    came from the contract (C1) but their NAMES did not, so a contract edit would
+    have produced a correctly-computed boolean under a header that lies — and
+    nothing tests a header. The names are now contract-neutral."""
+    assert not any(any(ch.isdigit() for ch in c) for c in eg.THRESHOLD_COLS), (
+        "a threshold_precheck header carries a number; it will lie after the next "
+        "contract edit")
+    assert {"gamma_ge_min", "vega_ge_min", "price_parity_within_tol"} <= set(
+        eg.THRESHOLD_COLS)
+    # and the emitted rows use exactly those keys
+    row = eg._threshold_rows(_eg_agg_rows(TH["ood_gamma_reduction_min"],
+                                          TH["ood_vega_reduction_min"], 0.0),
+                             TH["ood_regimes"], ["rung3"], TH)[0]
+    assert set(eg.THRESHOLD_COLS) == set(row)
+
+
 def test_eval_greeks_wing_bounds_match_the_contract():
     assert (eg.WING_LO, eg.WING_HI) == TH["moneyness_wing_bounds"]
 

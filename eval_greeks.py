@@ -189,7 +189,10 @@ THRESHOLD_COLS = ["regime", "arm",
                   "gamma_reduction_mean", "gamma_reduction_std",
                   "vega_reduction_mean", "vega_reduction_std",
                   "price_parity_mean", "price_parity_std",
-                  "gamma_ge_0.15", "vega_ge_0.15", "price_parity_within_0.10", "pass"]
+                  # contract-NEUTRAL names (audit N1): the values are read from
+                  # `thresholds`, so a header naming today's 0.15 / 0.10 would lie
+                  # after the next contract edit and nothing tests a header.
+                  "gamma_ge_min", "vega_ge_min", "price_parity_within_tol", "pass"]
 
 
 def _write_csv(path, cols, rows) -> None:
@@ -309,11 +312,11 @@ def _threshold_rows(agg_rows, primary_regimes, arms, thresholds: dict) -> list:
                          "gamma_reduction_mean": g_red, "gamma_reduction_std": g_std,
                          "vega_reduction_mean": v_red, "vega_reduction_std": v_std,
                          "price_parity_mean": pp, "price_parity_std": pp_std,
-                         # NOTE: these three column NAMES carry the contract's
-                         # current numbers; the values they hold are computed from
-                         # `thresholds` (see audit/FINDINGS_ADDENDUM.md).
-                         "gamma_ge_0.15": bool(g_ok), "vega_ge_0.15": bool(v_ok),
-                         "price_parity_within_0.10": bool(p_ok),
+                         # names carry no number; the thresholds they were tested
+                         # against are `thresholds[...]` and are printed with the
+                         # pre-check table (audit N1).
+                         "gamma_ge_min": bool(g_ok), "vega_ge_min": bool(v_ok),
+                         "price_parity_within_tol": bool(p_ok),
                          "pass": bool(g_ok and v_ok and p_ok)})
     return rows
 
