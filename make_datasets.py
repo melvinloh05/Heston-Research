@@ -78,6 +78,14 @@ SPLIT_RULE = (
     "np.random.default_rng([seed, 21]). Rationale: rows of one parameter point are "
     "correlated through that point's price surface; row-wise splitting leaks.")
 
+# Schema of a {regime}_grid.npz, minus the per-quantity consensus_/uncertainty_/
+# mask_ arrays. Asserted at write time so a key cannot be dropped silently; the
+# grids are FROZEN artifacts, so `param_names` travelling with `params` (Q6) is
+# what lets a consumer bind by name instead of by a shared import's ordering.
+_ANCHOR_GRID_KEYS = frozenset({
+    "S_axis", "K_axis", "tau_axis", "params", "param_names", "feller_ratio",
+    "mc_mask", "mc_flat_idx", "adi_leg", "mask_any", "tol_rel", "seed", "r", "q"})
+
 MC_STRATIFICATION = (
     "MC row subset stratified by tau slice: for each tau slice in tau order, "
     "ceil(mc_subset_frac * nS*nK) (S, K) cells drawn without replacement from "
@@ -441,11 +449,18 @@ def generate_anchor_grids(contract_path: str, out_dir: str, seed: int, *,
 
         arrays = {"S_axis": S_ax, "K_axis": K_ax, "tau_axis": T_ax,
                   "params": np.array([getattr(p, k) for k in HESTON_PARAM_NAMES]),
+                  # Q6: the names travel WITH the vector, exactly as the label
+                  # artifact does (make_labels.py:187). A frozen grid outlives the
+                  # shared HESTON_PARAM_NAMES import that used to be the only thing
+                  # keeping producer and consumer in the same order.
+                  "param_names": np.array(HESTON_PARAM_NAMES),
                   "feller_ratio": np.float64(p.feller_ratio),
                   "mc_mask": mc_mask, "mc_flat_idx": idx,
                   "adi_leg": np.bool_(fourth), "mask_any": mask_any,
                   "tol_rel": np.float64(tol), "seed": np.int64(seed),
                   "r": np.float64(r), "q": np.float64(q)}
+        assert _ANCHOR_GRID_KEYS <= set(arrays), \
+            f"anchor grid missing {sorted(_ANCHOR_GRID_KEYS - set(arrays))}"
         for g in LABEL_QUANTITIES:
             arrays[f"consensus_{g}"] = getattr(cons, g)
             arrays[f"uncertainty_{g}"] = getattr(unc, g)

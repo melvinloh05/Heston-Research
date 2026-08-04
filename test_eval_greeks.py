@@ -22,6 +22,7 @@ from eval_greeks import (AGG_COLS, GREEKS, PERSEED_COLS, THRESHOLD_COLS,
                          reduction_vs_baseline, run_greek_eval)
 from make_labels import generate_labels
 from pinn_provider import PINNProvider
+from train_pinn import HESTON_PARAM_NAMES
 
 CONTRACT = "heston_benchmark_v6.yaml"
 CFG = "pinn_config.yaml"
@@ -52,10 +53,12 @@ REGIME_PARAMS = {
 # ---------------------------------------------------------------------------
 
 def _fake_grid(path, params, *, seed=0, mask_points=(), poison=False,
-               nS=4, nK=3, nT=3):
+               nS=4, nK=3, nT=3, param_names=HESTON_PARAM_NAMES):
     """Minimal {regime}_grid.npz: full contract-grid axes, injected params, controlled
     consensus/uncertainty/mask. `mask_points` = list of (i,j,k) grid cells set in mask_any;
-    `poison` sets those cells' consensus to NaN (to prove masked points are never read)."""
+    `poison` sets those cells' consensus to NaN (to prove masked points are never read).
+    `param_names` is written alongside `params` (Q6) and can be permuted to prove the
+    reader binds by NAME."""
     S_ax = np.linspace(50.0, 150.0, nS)
     K_ax = np.linspace(60.0, 140.0, nK)
     T_ax = np.linspace(0.04, 1.0, nT)
@@ -65,7 +68,8 @@ def _fake_grid(path, params, *, seed=0, mask_points=(), poison=False,
     for pt in mask_points:
         mask_any[pt] = True
     arr = {"S_axis": S_ax, "K_axis": K_ax, "tau_axis": T_ax,
-           "params": np.asarray(params, float), "mask_any": mask_any,
+           "params": np.asarray(params, float),
+           "param_names": np.array(param_names), "mask_any": mask_any,
            "r": np.float64(R), "q": np.float64(Q), "seed": np.int64(seed)}
     for g in GREEKS:
         cons = rng.uniform(0.5, 1.5, shape)
@@ -162,6 +166,36 @@ def test_regime_params_are_injected(provider, tmp_path):
     ma = eval_arm_on_regime(provider, a, "baseline")
     mb = eval_arm_on_regime(provider, b, "strong_neg_corr")
     assert any(ma[g]["rmse"] != mb[g]["rmse"] for g in GREEKS)  # columns actually vary
+
+
+def test_anchor_grid_params_are_bound_by_name(provider, tmp_path):
+    """Q6: the anchor grid stored `params` as a bare 5-vector and eval_greeks
+    zipped it against its own imported HESTON_PARAM_NAMES. Safe only while that
+    import holds — and the grids are FROZEN artifacts that outlive it. The label
+    artifact already carries an explicit param_names; the grids now match, and
+    the binding is by name."""
+    base = REGIME_PARAMS["near_feller"]
+    ref = _fake_grid(tmp_path / "ref.npz", base, seed=3)
+    m_ref = eval_arm_on_regime(provider, ref, "near_feller")
+
+    # SAME regime, params and names permuted together -> identical metrics
+    perm = [3, 0, 4, 1, 2]
+    shuffled = _fake_grid(tmp_path / "perm.npz", [base[i] for i in perm], seed=3,
+                          param_names=[HESTON_PARAM_NAMES[i] for i in perm])
+    m_perm = eval_arm_on_regime(provider, shuffled, "near_feller")
+    for g in GREEKS:
+        assert m_perm[g]["rmse"] == pytest.approx(m_ref[g]["rmse"]), g
+
+    # the writer emits it, so producer and consumer agree without a shared import
+    import make_datasets
+    assert "param_names" in make_datasets._ANCHOR_GRID_KEYS
+
+    # a grid whose names are not the five Heston parameters is REFUSED, not
+    # silently zipped into the wrong slots
+    bad = _fake_grid(tmp_path / "bad.npz", base, seed=3,
+                     param_names=["kappa", "theta", "xi", "rho", "sigma0"])
+    with pytest.raises(ValueError, match="param_names"):
+        eval_arm_on_regime(provider, bad, "near_feller")
 
 
 # ---------------------------------------------------------------------------

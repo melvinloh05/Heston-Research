@@ -1,0 +1,41 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________________ test_anchor_grid_params_are_bound_by_name ___________________
+
+provider = <pinn_provider.PINNProvider object at 0x31fb67a10>
+tmp_path = PosixPath('/private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/test_anchor_grid_params_are_bo0')
+
+    def test_anchor_grid_params_are_bound_by_name(provider, tmp_path):
+        """Q6: the anchor grid stored `params` as a bare 5-vector and eval_greeks
+        zipped it against its own imported HESTON_PARAM_NAMES. Safe only while that
+        import holds — and the grids are FROZEN artifacts that outlive it. The label
+        artifact already carries an explicit param_names; the grids now match, and
+        the binding is by name."""
+        base = REGIME_PARAMS["near_feller"]
+        ref = _fake_grid(tmp_path / "ref.npz", base, seed=3)
+        m_ref = eval_arm_on_regime(provider, ref, "near_feller")
+    
+        # SAME regime, params and names permuted together -> identical metrics
+        perm = [3, 0, 4, 1, 2]
+        shuffled = _fake_grid(tmp_path / "perm.npz", [base[i] for i in perm], seed=3,
+                              param_names=[HESTON_PARAM_NAMES[i] for i in perm])
+        m_perm = eval_arm_on_regime(provider, shuffled, "near_feller")
+        for g in GREEKS:
+>           assert m_perm[g]["rmse"] == pytest.approx(m_ref[g]["rmse"]), g
+E           AssertionError: price
+E           assert 31.642108191452852 == 31.433799676588464 ± 3.1e-05
+E             comparison failed
+E             Obtained: 31.642108191452852
+E             Expected: 31.433799676588464 ± 3.1e-05
+
+test_eval_greeks.py:187: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/standard_pinn/s0/best.pt (best step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/standard_pinn/s0/last.pt (matched_epochs step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/standard_pinn/s0/runlog.json, /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/standard_pinn/s0/loss_curves.csv
+wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/standard_pinn/s1/best.pt (best step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/standard_pinn/s1/last.pt (matched_epochs step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/standard_pinn/s1/runlog.json, /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/standard_pinn/s1/loss_curves.csv
+wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung2_delta_gamma/s0/best.pt (best step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung2_delta_gamma/s0/last.pt (matched_epochs step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung2_delta_gamma/s0/runlog.json, /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung2_delta_gamma/s0/loss_curves.csv
+wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung2_delta_gamma/s1/best.pt (best step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung2_delta_gamma/s1/last.pt (matched_epochs step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung2_delta_gamma/s1/runlog.json, /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung2_delta_gamma/s1/loss_curves.csv
+wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung3_delta_gamma_vega/s0/best.pt (best step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung3_delta_gamma_vega/s0/last.pt (matched_epochs step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung3_delta_gamma_vega/s0/runlog.json, /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung3_delta_gamma_vega/s0/loss_curves.csv
+wrote /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung3_delta_gamma_vega/s1/best.pt (best step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung3_delta_gamma_vega/s1/last.pt (matched_epochs step 60), /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung3_delta_gamma_vega/s1/runlog.json, /private/var/folders/1_/bd8bxstj23s1qj5hpw0wncpr0000gn/T/pytest-of-melvin/pytest-63/eg_ckpts0/rung3_delta_gamma_vega/s1/loss_curves.csv
+=========================== short test summary info ============================
+FAILED test_eval_greeks.py::test_anchor_grid_params_are_bound_by_name - Asser...
+1 failed, 10 deselected in 8.33s

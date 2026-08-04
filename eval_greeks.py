@@ -116,7 +116,16 @@ def eval_arm_on_regime(provider_or_model, regime_npz, regime_name: str, *,
     S_ax, K_ax, T_ax = (np.asarray(d[f"{a}_axis"], float) for a in ("S", "K", "tau"))
     Sg, Kg, Tg = np.meshgrid(S_ax, K_ax, T_ax, indexing="ij")
     Sf, Kf, Tf = Sg.ravel(), Kg.ravel(), Tg.ravel()
-    reg = {k: float(v) for k, v in zip(HESTON_PARAM_NAMES, np.asarray(d["params"], float))}
+    # Q6: bind the regime parameters BY NAME off the grid's own param_names, the
+    # way build_arm_labels reads the label artifact. The grid is a frozen artifact
+    # that outlives this module's HESTON_PARAM_NAMES import, so a positional zip
+    # against the import is only safe while the import happens to agree.
+    names = [str(n) for n in d["param_names"]]
+    if set(names) != set(HESTON_PARAM_NAMES) or len(names) != len(HESTON_PARAM_NAMES):
+        raise ValueError(
+            f"{regime_npz}: param_names {names} are not the Heston parameters "
+            f"{list(HESTON_PARAM_NAMES)} — refusing to bind them positionally")
+    reg = {k: float(v) for k, v in zip(names, np.asarray(d["params"], float))}
 
     keep = ~np.asarray(d["mask_any"], bool).ravel()          # unmasked = legs agree
     wing = (Sf / Kf < WING_LO) | (Sf / Kf > WING_HI)
