@@ -56,7 +56,8 @@ wins and the code changes.
 
 ## Pre-registered thresholds (state before results; report failures as honest nulls)
 - Confirmatory pass: misspec delta CVaR95 improvement ≥10% relative AND paired-bootstrap 95% CI
-  excludes 0, at the confirmatory cell.
+  excludes 0, at the confirmatory cell — the number is `acceptance_thresholds.
+  confirmatory_cell_rel_min` (0.10, contract amendment AM2-1); no Python literal remains.
 - Order attribution: rung2 beats rung1 at the cell, CI excludes 0.
 - Dose-response: Spearman ρ>0 (isotonic fit for shape) AND one-sided seed-bootstrap tail
   probability P(ρ≤0) < `acceptance_thresholds.dose_response.bootstrap_tail_prob_max` (0.05,
@@ -70,6 +71,13 @@ wins and the code changes.
 - Mechanism: gap at 0% TC ⇒ robustness channel (i); zero-at-0% widening with TC and T_ex→0 ⇒
   cost channel (ii); T_ex unmoved kills (ii) regardless of PnL. Both readings publishable.
 - In-model × κ=0 cell must reproduce the Sakuma null (consistency check, NOT pass/fail).
+- Verdict vocabulary is pre-registered in `acceptance_thresholds.verdict_vocabulary` (AM2-2):
+  `null` = NOT EVALUATED (artifact legitimately absent), `error` = evaluation attempted and
+  FAILED (artifact present but corrupt). Never collapse the two in any table, memo or figure.
+- Gate σ ladder and its region of validity: `oracle_headroom_gate.{sigma_rel_ladder,
+  effective_sigma_reporting, region_of_validity}` (AM2-3) — decision rungs ≤0.20 only, 0.40
+  diagnostic-only, and a gate whose pilot lands above `region_of_validity.clipped_frac_max`
+  (0.25) is INCONCLUSIVE, not a pass or a no-go. Do not widen or remove the delta clip.
 
 ## Declared design deviations
 Pre-registered-machinery deviations that currently live only in code docstrings, recorded here

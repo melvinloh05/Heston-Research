@@ -45,6 +45,60 @@ oracle_headroom_gate:
     If spread < pre-registered 10% CVaR95 threshold at chosen frequency and TC tiers,
     RETUNE (rebalance frequency, misspecification severity) before M4. Non-optional.
   spread_threshold_rel: 0.10   # C1 — was gate_headroom.py:361 literal; the "10%" named above
+  # ---------------------------------------------------------------------------
+  # AM2-3 — sigma ladder, effective sigma, and region of validity.
+  # Fix batch 2 (G2) made the delta clip's binding fraction MEASURABLE and measured it
+  # (audit/fixlog/g2_measured.txt, field mode, confirmatory cell, n_paths=256, 2 seeds):
+  #     sigma_rel  0.1 -> clipped_frac 0.061   0.2 -> 0.215   0.4 -> 0.780   0.8 -> 0.960
+  # `amp` is calibrated so std(d_eta/dS) equals sigma_gamma_target on the UNCLIPPED field
+  # and the clip is applied afterwards, so above ~0.2 the DELIVERED corruption diverges
+  # sharply from its label. The clip STAYS as it is: it is what keeps the corrupted arm a
+  # plausible hedger, and without it the spread would be dominated by leverage rather than
+  # by gamma error. What changes is where the ladder sits and what the gate is allowed to
+  # conclude. FIXED BEFORE THE PILOT RAN: at the time of this amendment no pilot fit and no
+  # gate run existed (data/ and results/ do not exist), so the region of validity below was
+  # chosen without knowing which side of it sigma_gamma_pilot would land on.
+  # ---------------------------------------------------------------------------
+  sigma_rel_ladder:            # AM2-3a — replaces gate_headroom.py:82 _SIGMA_REL_DEFAULT (0.1, 0.2, 0.4, 0.8)
+    decision: [0.05, 0.10, 0.15, 0.20]        # the ONLY rungs the DECISION section may fire on
+    diagnostic: [0.40]                        # reported and plotted, NEVER a decision input: ~78% clipped, outside region_of_validity
+    spacing_rationale: >
+      The clip's bite roughly TRIPLES between sigma_rel 0.1 (0.061) and 0.2 (0.215) and then
+      saturates (0.780 at 0.4, 0.960 at 0.8), so resolution is worth buying below 0.2 and
+      worth nothing above it: 0.05 spacing across [0.05, 0.20], one diagnostic rung above.
+      0.05 and 0.15 are NOT separately measured; because every arm scales ONE common frozen
+      field by amp, clipped_frac is monotone non-decreasing in sigma_rel, so they are
+      BOUNDED by their measured neighbours (<=0.061 and <=0.215 respectively) rather than
+      guessed. 0.40 is retained as the labelled diagnostic that exhibits the saturation.
+      0.80 is DROPPED: at 96% clipped the corrupted provider is a bang-bang hedger, not a
+      gamma-error perturbation, and its spread measures leverage, not Greek error.
+  effective_sigma_reporting:   # AM2-3b — nominal sigma_rel labels the field BEFORE the clip; the gate must also report what was DELIVERED
+    sigma_delta_effective: "std over the reference cloud of the DELIVERED post-clip delta error, clip(delta + eta) - delta"
+    sigma_gamma_effective: "std over the reference cloud of d/dS of that delivered delta error -- the post-clip counterpart of the calibration statistic std(d_eta/dS)"
+    report_alongside: sigma_rel               # every headroom.csv row and headroom_report.md row carries NOMINAL and EFFECTIVE
+    compare_pilot_against: sigma_gamma_effective
+    units_note: >
+      sigma_gamma_pilot (train.py --pilot, handed over via --sigma-gamma-from-runlog) is a
+      GAMMA rmse, so the pilot point is compared against sigma_gamma_effective; the two
+      effective quantities are in different units and only that one is commensurable with
+      the pilot. sigma_delta_effective is declared because it is the direct measure of how
+      much of the intended corruption the clip removed. EMISSION IS A CODE CHANGE
+      (gate_headroom.py) and is NOT part of this amendment: today the gate reports nominal
+      sigma_rel plus clipped_frac only.
+  region_of_validity:          # AM2-3c — where the gate's spread->sigma mapping means anything at all
+    statistic: clipped_frac                   # per-arm fraction of delta evaluations on which the [-0.05, 1.05] delta clip BOUND; emitted by fix batch 2 (G2), gate_headroom.py _DELTA_CLIP
+    clipped_frac_max: 0.25                    # the smallest round bound admitting the whole DECISION ladder as measured (0.215 at its top rung, 0.20) while excluding 0.40 (0.780). Chosen to fit the ladder, with headroom for seed/cell variation in the measured 0.215 -- not derived from an independent principle
+    interpretation: >
+      Above clipped_frac_max the delivered corruption is dominated by the clip rather than
+      by the calibrated field: the arm's spread is no longer a monotone reading of a gamma
+      error of the labelled size, so spread cannot be mapped back to sigma. Rows above the
+      bound are DIAGNOSTIC ONLY and must be labelled as such wherever they appear.
+    if_pilot_outside: >
+      If sigma_gamma_pilot lands at an effective sigma whose clipped_frac exceeds
+      clipped_frac_max, the gate result is reported as INCONCLUSIVE -- neither a pass nor a
+      no-go -- and the ladder must be revisited (and this clause re-decided) BEFORE any go
+      decision. An inconclusive gate does not authorize training spend, and must not be
+      read as a failed gate.
   motivation: "Sakuma Table 5 (oracle ~= network hedge) is the power warning."
   runs_before: all_training
 
@@ -317,6 +371,7 @@ ablations:
 # -----------------------------------------------------------------------------
 acceptance_thresholds:
   confirmatory_cell_pass: "misspec delta CVaR95 improvement >=10% relative AND paired-bootstrap 95% CI excludes 0 (combined,1% TC,baseline,rung3 vs standard_pinn)"
+  confirmatory_cell_rel_min: 0.10             # AM2-1 — the ">=10% relative" named above, AS A NUMBER. Was the last surviving Python literal after C1 (Hedging_backtest.contract_thresholds, marked TODO(C1)); requested in audit/contract_requests.md. Prose above unchanged; the number joins it
   headline_scale_free: fraction_of_baseline_to_oracle_gap_closed
   order_attribution: "rung2 beats rung1 at the cell, CI excludes 0; failure = honest null"
   dose_response:                              # Q2 — was one-line prose "monotone (isotonic + rank correlation); flat = regularization null"
@@ -336,6 +391,25 @@ acceptance_thresholds:
   sakuma_null_rel_tol: 0.02                   # C1 — was analyze_results.py:622 rel_tol; band for the in_model_hedging consistency check above
   seeds: {default: 5, confirmatory_cell: 10}
   tail_claim_requires: paired_bootstrap_over_CRN_paths_with_seed_variance_separated
+  verdict_vocabulary:                         # AM2-2 — permitted values of the `verdict` column of results/tables/threshold_verdicts.csv. Fix batch 2 (A4) introduced `error`; the reporting schema is part of the pre-registration, so the vocabulary is declared here rather than discovered from the code
+    universal:                                # available to EVERY threshold row
+      "null": "NOT EVALUATED. The artifact is legitimately absent, or a declared precondition is unmet (e.g. fewer than seeds.confirmatory_cell seeds present). NO claim is made in either direction -- this is not a result"
+      "error": "evaluation was ATTEMPTED and FAILED: the artifact is PRESENT but unusable (renamed column, array-shape mismatch, failed import). A defect in the analysis or in the artifact, NEVER a study outcome"
+    outcome_values:                           # each threshold emits exactly one of ITS pair/set in place of a universal value
+      confirmatory_cell: [pass, fail]         # fail = honest null
+      order_attribution: [pass, fail]         # fail = honest null
+      ood_greek_thresholds: [pass, fail]      # fail = honest null
+      dose_response: [monotone, flat]         # flat = "monotonicity not demonstrated" (see dose_response.interpretation), NOT "is flat"
+      sakuma_null_consistency: [consistent, flag]   # consistency check, NOT pass/fail (see in_model_hedging)
+      mechanism_adjudication: [channel_i, channel_ii, decomposition, "null"]   # `null` here is the ADJUDICATED no-channel reading, which coincides with the universal not-evaluated string; disambiguate via notes
+      goldilocks_bates: [decision_relevant_regime_located, "null"]             # same coincidence; `null` = no decisive severity row located
+    must_not_collapse: >
+      `null` and `error` must NEVER be merged in any table, memo or figure. "Not evaluated"
+      and "evaluation broke" are different states, and only the first is a legitimate
+      reporting outcome: an `error` row means the study has a defect to fix, not a result to
+      report. mechanism_memo renders every verdict identically as **{verdict}**, so the
+      distinction lives in the VALUE and must survive every downstream transcription.
+    yaml_note: "`null` and `error` are QUOTED because bare null is a YAML null literal; they are the strings 'null' and 'error'"
 
 # -----------------------------------------------------------------------------
 # FOUR EXHIBITS
