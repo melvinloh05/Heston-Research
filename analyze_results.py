@@ -53,6 +53,7 @@ _MISSPEC_FILTER = {"sweep": "perturbation", "direction": "combined", "magnitude"
 _INMODEL_FILTER = {"sweep": "perturbation", "direction": "combined", "magnitude": 0.0}
 
 _STREAM_POOLED = 7                                       # pooled-bootstrap rng stream
+_STREAM_SPEARMAN = 8                                     # dose seed-bootstrap rng stream
 _DIR = Path(__file__).resolve().parent
 _TH_CACHE: dict = {}
 
@@ -519,7 +520,12 @@ def _spearman_seed_bootstrap(xs, y_by_seed, seeds, n_boot: int, seed: int):
     if not math.isfinite(rho0) or n_boot <= 0 or len(seeds) < 2:
         return (float(rho0) if math.isfinite(rho0) else float("nan"),
                 float("nan"), (float("nan"), float("nan")))
-    rng = np.random.default_rng(int(seed))
+    # Q7: the documented [seed, _STREAM_*] convention, as everywhere else in this
+    # module and the engine. Numerically inert — default_rng(42) and
+    # default_rng([42, 8]) are different streams either way, and this bootstrap
+    # resamples SEEDS while _STREAM_POOLED resamples paths — but the convention is
+    # what makes stream collisions checkable by inspection.
+    rng = np.random.default_rng([int(seed), _STREAM_SPEARMAN])
     rhos = np.empty(int(n_boot))
     with warnings.catch_warnings():                     # constant resample -> nan (filtered)
         warnings.simplefilter("ignore")

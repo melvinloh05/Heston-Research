@@ -1,0 +1,19 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______________ test_spearman_bootstrap_uses_the_stream_convention ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x104170f50>
+
+    def test_spearman_bootstrap_uses_the_stream_convention(monkeypatch):
+        """Q7: every other RNG in this module and the engine keys off
+        np.random.default_rng([seed, _STREAM_*]); the Spearman seed-bootstrap used a
+        bare default_rng(seed). Numerically inert (the two are different streams
+        either way, and they resample different things), but the convention is what
+        keeps stream collisions checkable by inspection."""
+>       assert ar._STREAM_SPEARMAN != ar._STREAM_POOLED
+E       AttributeError: module 'analyze_results' has no attribute '_STREAM_SPEARMAN'
+
+test_analyze_results.py:461: AttributeError
+=========================== short test summary info ============================
+FAILED test_analyze_results.py::test_spearman_bootstrap_uses_the_stream_convention
+1 failed, 24 deselected in 0.16s

@@ -18,6 +18,7 @@ The one place a real config is touched is build_arm_labels via the arm PINNConfi
 from __future__ import annotations
 
 import csv
+import math
 import os
 
 import numpy as np
@@ -449,6 +450,32 @@ def test_dose_bs_gap_uses_the_common_seeds(tmp_path, monkeypatch):
     assert byarm["sigma_000"]["cvar_mean"] == pytest.approx(12.0)
     assert gap == pytest.approx(18.0)
     assert f"gap={gap:.4g}" in vd["notes"]
+
+
+def test_spearman_bootstrap_uses_the_stream_convention(monkeypatch):
+    """Q7: every other RNG in this module and the engine keys off
+    np.random.default_rng([seed, _STREAM_*]); the Spearman seed-bootstrap used a
+    bare default_rng(seed). Numerically inert (the two are different streams
+    either way, and they resample different things), but the convention is what
+    keeps stream collisions checkable by inspection."""
+    assert ar._STREAM_SPEARMAN != ar._STREAM_POOLED
+
+    seen = []
+    real = np.random.default_rng
+
+    def spy(arg=None, *a, **kw):
+        seen.append(arg)
+        return real(arg, *a, **kw)
+
+    monkeypatch.setattr(np.random, "default_rng", spy)
+    xs = [0.0, 0.2, 0.5]
+    y_by_seed = [{0: 1.0, 1: 1.1, 2: 1.2},
+                 {0: 2.0, 1: 2.2, 2: 2.1},
+                 {0: 3.0, 1: 3.1, 2: 3.3}]
+    rho, p, _ci = ar._spearman_seed_bootstrap(xs, y_by_seed, [0, 1, 2], 50, 42)
+    assert math.isfinite(rho) and math.isfinite(p)
+    assert [42, ar._STREAM_SPEARMAN] in seen
+    assert 42 not in seen                       # never the bare-seed form
 
 
 def test_dose_response_flat_null(tmp_path):
