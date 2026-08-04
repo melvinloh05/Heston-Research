@@ -1160,3 +1160,111 @@ one.
 `heston_benchmark_v6.yaml` is clean and the final line of the transcript shows an empty diff.
 
 **Full suite after the commit: 259 passed.**
+
+---
+
+## Batch 3 close-out — the four confirmations
+
+### 1. Contract-declared ladder == code-executed ladder
+
+Run against the real contract and a real `resolve_config()`:
+
+```
+contract decision   : [0.05, 0.1, 0.15, 0.2]
+executed decision   : [0.05, 0.1, 0.15, 0.2]
+contract diagnostic : [0.4]
+executed diagnostic : [0.4]
+source              : contract
+module literal      : ABSENT
+match               : True
+```
+
+The 0.8 rung the amendment deleted is gone from what a default invocation executes, and
+`gate_headroom._SIGMA_REL_DEFAULT` no longer exists (asserted by
+`test_sigma_ladder_comes_from_the_contract`). The one way to sweep something else is an
+explicit operator override, which warns if it re-promotes a contract-diagnostic rung and
+stamps "**LADDER OVERRIDDEN — this is NOT the contract ladder**" on the report.
+
+### 2. Diagnostic rungs cannot reach the DECISION scan
+
+```python
+decision = {}
+for tc in tiers:
+    decision[tc] = next(
+        (s for s in summary if s["tc"] == tc and s["decision_eligible"]
+         and s["spread_rel_mean"] >= spread_threshold_rel
+         and s["ci_excludes_zero_frac"] == 1.0), None)
+```
+
+`decision_eligible` is set per ARM at construction and copied onto every record and summary
+row, so the exclusion cannot be lost between the sweep and the scan.
+`test_diagnostic_rung_cannot_fire_the_decision_scan` runs a gate whose diagnostic rung DOES
+satisfy the rest of the predicate (spread above threshold, every seed's CI excluding 0) and
+asserts it is never the decision row at any tier.
+
+### 3. `audit/contract_requests.md` is empty
+
+The file now opens with "## EMPTY — nothing is outstanding" and records the closed loop
+(request -> AM2-1 -> ITEM 6) plus the shape a future request should take. Zero re-typed
+contract literals remain: `grep -rn "TODO(C1)" --include="*.py" .` returns only the docstring
+of the test that documents the closure.
+
+### 4. The YAML diff contains only the two renamed strings
+
+Batch-scoped (`git diff 6786c0a..HEAD -- '*.yaml'`, i.e. this branch against its
+`contract/v6-amendment-2` branch point): **1 file changed, 2 insertions(+), 2 deletions(-)**
+— the `mechanism_adjudication` and `goldilocks_bates` entries of
+`acceptance_thresholds.verdict_vocabulary.outcome_values`, each with its trailing comment
+(which described the collision the rename removes). Nothing else in any YAML moved:
+`hedging_config.yaml` and `pinn_config.yaml` are untouched.
+
+`git diff main..HEAD -- '*.yaml'` is larger only because `main` predates BOTH contract
+amendments; everything in it beyond the two lines above is commits `a5a08a1` (amendment 1)
+and `6786c0a` (amendment 2), neither of which is this batch's work.
+
+### The divergence the amendment opened is closed
+
+| amendment §5 divergence | status |
+|---|---|
+| `sigma_rel_ladder` declared, `_SIGMA_REL_DEFAULT` executed | CLOSED (ITEM 1) |
+| `effective_sigma_reporting` declared, nothing emitted | CLOSED (ITEM 3) |
+| `region_of_validity.if_pilot_outside` declared, nothing evaluated | CLOSED (ITEM 4) |
+| `confirmatory_cell_rel_min` declared, `TODO(C1)` literal live | CLOSED (ITEM 6) |
+| `verdict_vocabulary` read by no code | bound by a test (ITEM 5) |
+
+## Open for the human (batch 3)
+
+1. **The top decision rung sits ON the region-of-validity bound at production scale**
+   (ITEM 2). `clipped_frac` at `sigma_rel = 0.2` is 0.2470 mean / 0.2513 max against
+   `clipped_frac_max = 0.25`, with 3 of 10 seeds outside. Contract decision, needed BEFORE
+   the gate runs: demote 0.20, move the bound, or accept and report a straddling top rung.
+   Nothing was adjusted.
+2. **The clip INFLATES the delivered gamma error across the decision band** (ITEM 3,
+   `FINDINGS_ADDENDUM` N8): 1.21x nominal at 0.10, 1.41x at 0.15, 1.54x at 0.20. The AM2-3
+   block comment's conservatism argument ("the delivered gamma error is smaller... the gate
+   is conservative") is measured to be false in exactly the band the gate decides on. The
+   contract text is the human's to amend; the code now emits the number instead of assuming
+   the direction.
+3. **`_DELTA_CLIP = (-0.05, 1.05)` is still a Python literal** (amendment notes §4.4).
+   Load-bearing for the corruption model, and both open items above are consequences of it.
+   Not declared, not touched — the task froze it.
+4. **`preflight="warn"` is the default** (ITEM 7). If a full-size sweep should refuse to
+   start rather than shout and run, the run-book should pass `--strict-preflight`.
+
+## Rules compliance (batch 3)
+
+- Branch `fix/audit-batch-3`, one commit per item, prefixed with the item ID (E1-E8; E2
+  lands after E3/E4 because its measurement ran for 87 minutes in the background). ✅
+- Every fix test-first with the pre-fix failure captured in `audit/fixlog/e*_pre.txt` and
+  quoted above. ✅
+- Full suite green after every commit: 244 -> 249 -> 251 -> 254 -> 254 -> 256 -> 258 -> 259
+  (baseline 240; 19 new tests). ✅
+- YAML: only the two authorized strings, in the one file named. `hedging_config.yaml` and
+  `pinn_config.yaml` untouched. The three mutations of ITEM 8(b) were reverted and verified
+  clean. ✅
+- No refactors. Everything noticed and not fixed is in `audit/FINDINGS_ADDENDUM.md` (N8) or
+  "Open for the human" above. ✅
+- **Six pre-existing assertions edited**, each unavoidable because the fix changes the
+  observable the assertion names, each documented at its item: five verdict strings in
+  `test_analyze_results.py` (ITEM 5) and the three precheck column names in one assertion of
+  `test_eval_greeks.py` (ITEM 8a). Every one keeps its substantive check. ✅
