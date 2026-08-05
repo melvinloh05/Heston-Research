@@ -67,10 +67,22 @@ from oracle import (GREEK_NAMES, GreekSet, HestonParams, cross_validate,
                     heston_greeks_mc)
 from train_pinn import HESTON_PARAM_NAMES, anchors_from_contract, sample_hypercube_params
 
-N_INFO = 4096                 # N = pinn shared.n_price_points (per-arm price budget)
-TRAIN_MIN_ROWS = 5 * N_INFO   # the contract's information-matching cap 5N
-VAL_MIN_ROWS = N_INFO
 CHUNK_MAX = 32
+
+
+def info_budget(pinn_raw: dict) -> tuple[int, int]:
+    """(min TRAIN rows, min VAL rows) = (5N, N) with N READ from the config.
+
+    N is `shared.n_price_points` (pinn_config.yaml) — the ladder's per-arm
+    price-point budget — and the retained-row budget below is the guard on the
+    information-matching cap 5N. It was a module literal `N_INFO = 4096`
+    re-typed alongside the config with nothing tying them (audit ITEM 2, same
+    class as C1): a config edit would leave the guard validating against a stale
+    N, silently invalidating the very check that exists to prevent I1. There is
+    no default — a missing key raises rather than falling back to 4096.
+    """
+    n = int(pinn_raw["shared"]["n_price_points"])
+    return 5 * n, n
 
 SPLIT_RULE = (
     "Split is BY PARAMETER POINT, never by (S, K, tau) row: all n_skt rows of one "
@@ -137,8 +149,8 @@ def generate_train_val(contract_path: str, pinn_cfg_path: str, out_dir: str, see
                        mc_subset_frac: float = 0.10, val_param_frac: float = 0.20,
                        resume: bool = True, chunk_size: int = CHUNK_MAX,
                        leg_kwargs: dict[str, dict] | None = None,
-                       min_train_rows: int = TRAIN_MIN_ROWS,
-                       min_val_rows: int = VAL_MIN_ROWS) -> dict:
+                       min_train_rows: int | None = None,
+                       min_val_rows: int | None = None) -> dict:
     """Production train/val label artifact via chunked make_labels.generate_labels.
 
     Samples the full hypercube once, generates parts of <= chunk_size parameter
@@ -146,7 +158,9 @@ def generate_train_val(contract_path: str, pinn_cfg_path: str, out_dir: str, see
     with a BY-PARAMETER-POINT split (see SPLIT_RULE), enforces the retained-row
     budget (TRAIN >= min_train_rows = 5N, VAL >= min_val_rows), writes the merged
     manifest and runs mask_neutrality_report on the merged artifact.
-    min_train_rows/min_val_rows are smoke-test knobs; production uses defaults.
+    min_train_rows/min_val_rows are smoke-test knobs; left None (production) they
+    are `info_budget(pinn_cfg_path)` — 5N and N with N read from that config, so
+    the guard cannot validate against a stale N.
     """
     out = _assert_not_frozen(out_dir)
     assert 1 <= chunk_size <= CHUNK_MAX, f"chunk_size {chunk_size} violates the <= {CHUNK_MAX} rule"
@@ -155,6 +169,11 @@ def generate_train_val(contract_path: str, pinn_cfg_path: str, out_dir: str, see
     contract_sha, pinn_sha = _sha256_file(contract_path), _sha256_file(pinn_cfg_path)
     contract = yaml.safe_load(open(contract_path))
     pinn_raw = yaml.safe_load(open(pinn_cfg_path))
+    # the info-matching budget is 5N/N with N from THIS config, not a module
+    # literal; explicit arguments (smoke tests) still override.
+    _train_default, _val_default = info_budget(pinn_raw)
+    min_train_rows = _train_default if min_train_rows is None else int(min_train_rows)
+    min_val_rows = _val_default if min_val_rows is None else int(min_val_rows)
     hyc = pinn_raw.get("hypercube_sampling", {})
     samp = contract["training_parameterization"]["sampling"]
     ranges = {k: tuple(map(float, samp["ranges"][k])) for k in HESTON_PARAM_NAMES}
@@ -271,6 +290,9 @@ def generate_train_val(contract_path: str, pinn_cfg_path: str, out_dir: str, see
         "val_param_frac": val_param_frac, "split_rule": SPLIT_RULE,
         "n_train_points": int((split == 0).sum()), "n_val_points": int(n_val),
         "budget": {"min_train_rows": int(min_train_rows), "min_val_rows": int(min_val_rows),
+                   # the N the 5N cap was checked against, so a frozen artifact
+                   # records which n_price_points its budget check assumed
+                   "n_price_points": int(pinn_raw["shared"]["n_price_points"]),
                    "retained_train_rows": retained_train,
                    "retained_val_rows": retained_val, "pass": True},
         "mask_rate": {g: float(merged[f"mask_{g}"].mean()) for g in LABEL_QUANTITIES}

@@ -10,13 +10,18 @@ both entry points.
 """
 from __future__ import annotations
 
+import ast
 import csv
+import json
+from pathlib import Path
 
 import numpy as np
 import pytest
+import yaml
 
+import make_datasets as md
 import oracle
-from make_datasets import generate_anchor_grids, generate_train_val
+from make_datasets import generate_anchor_grids, generate_train_val, info_budget
 from make_labels import LABEL_QUANTITIES
 
 CONTRACT = "heston_benchmark_v6.yaml"
@@ -116,6 +121,57 @@ def test_budget_check_raises_with_exact_n_needed(tmp_path, monkeypatch):
                            min_train_rows=8, min_val_rows=1)
     assert not (out / "train_val_labels.npz").exists(), \
         "failed budget must not emit a merged artifact"
+
+
+def test_info_budget_is_the_configs_n_not_a_literal():
+    """ITEM 2 (C1-class parity): the 5N/N floors the budget check acts on ARE
+    `shared.n_price_points`, navigated independently out of pinn_config.yaml —
+    not a module constant re-typed alongside it (the old `N_INFO = 4096`)."""
+    raw = yaml.safe_load(Path(CFG).read_text())
+    n = int(raw["shared"]["n_price_points"])
+    assert info_budget(raw) == (5 * n, n)
+    assert not hasattr(md, "N_INFO"), "the re-typed literal is back"
+    # no numeric 4096 anywhere in the module's CODE (prose may still name it as
+    # the value that used to be hardcoded)
+    tree = ast.parse(Path(md.__file__).read_text())
+    assert not [k for k in ast.walk(tree)
+                if isinstance(k, ast.Constant) and k.value == 4096]
+    # and a config with no N raises rather than falling back
+    with pytest.raises(KeyError):
+        info_budget({"shared": {}})
+
+
+def test_budget_check_tracks_a_mutated_n_price_points(tmp_path):
+    """ITEM 2 mutation: change n_price_points in a COPY of the config and the
+    budget check must move with it. Under the old constant both halves below
+    validate against 4096 (5N = 20480) and the first would fail too."""
+    raw = yaml.safe_load(Path(CFG).read_text())
+
+    def cfg_with_n(n: int) -> str:
+        raw["shared"]["n_price_points"] = n
+        p = tmp_path / f"pinn_n{n}.yaml"
+        p.write_text(yaml.safe_dump(raw))
+        return str(p)
+
+    # N=2 -> floors (10, 2). 6 points x 4 rows, 20% val = 20 train / 4 val rows
+    # retained at the smoke mask rate: PASSES only because 5N followed the config.
+    out = tmp_path / "n_small"
+    res = generate_train_val(CONTRACT, cfg_with_n(2), str(out), SEED,
+                             n_param_points=6, n_skt=4, chunk_size=2,
+                             mc_subset_frac=0.1, val_param_frac=0.2,
+                             leg_kwargs=SMOKE_LEGS)
+    budget = res["manifest"]["budget"]
+    assert (budget["min_train_rows"], budget["min_val_rows"]) == (10, 2)
+    assert budget["n_price_points"] == 2, "the manifest must record the N used"
+    assert json.loads(Path(res["manifest_path"]).read_text())["budget"] == budget
+
+    # N=8 -> floors (40, 8); 3 train points x 4 rows = 12 < 40, so it must RAISE
+    # quoting the MUTATED 5N, not 20480 and not 8.
+    with pytest.raises(ValueError, match=r"< 40 \(5N\)"):
+        generate_train_val(CONTRACT, cfg_with_n(8), str(tmp_path / "n_big"), SEED,
+                           n_param_points=4, n_skt=4, chunk_size=2,
+                           mc_subset_frac=0.1, val_param_frac=0.25,
+                           leg_kwargs=SMOKE_LEGS)
 
 
 def test_anchor_adi_and_mc_routing_as_declared(anchors):
