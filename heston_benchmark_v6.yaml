@@ -244,6 +244,21 @@ training_parameterization:
     exclusions:
       - "rho < -0.80 excluded entirely -> strong_neg_corr (rho=-0.9) is genuine EXTRAPOLATION"
       - "excised balls (10% relative radius) around every named evaluation anchor"
+    val_param_frac: 0.20   # AM4-1 — the train/val split IS BY PARAMETER POINT (make_datasets.SPLIT_RULE);
+                            # was a bare 0.20 literal in three places (make_datasets.generate_train_val's
+                            # signature default, its --val-param-frac CLI default, and a SEPARATE hardcoded
+                            # fallback in train_pinn.ArmDataset._resolve_split for an artifact with no
+                            # `split` key) that could silently drift apart; requested in
+                            # audit/contract_requests_2.md item 1. Load-bearing for the training-row budget
+                            # (5N/N info-matching cap) and for LockedTestSet's validation-only lambda
+                            # selection discipline.
+    n_skt: 64               # AM4-1 — (S, K, tau) triples drawn once per artifact and shared across every
+                            # sampled parameter point; was a bare literal in make_datasets.py AND a SECOND,
+                            # DISAGREEING default (16) in make_labels.generate_labels. The measured
+                            # per-category mask rates and composed retention in dataset_sizing.md were
+                            # measured AT 64 on that specific shared draw -- a different n_skt requires
+                            # re-measuring the sizing memo, not rescaling it. audit/contract_requests_2.md
+                            # item 2.
   named_regimes_role: evaluation_anchors_not_training_set
   ood_type1_tiers:
     interpolation_with_hole: near_feller        # inside cube, ball excised
@@ -287,6 +302,21 @@ oracle:
     leg2: finite_difference_on_cf_price_grid
     leg3: monte_carlo_pathwise_or_likelihood_ratio
     agreement_tol_rel: 1.0e-3
+    mc_coverage_frac: 1.0   # AM4-2 — three-way EVERYWHERE, not a cost-concession subset. Was an
+                            # undeclared `mc_subset_frac=0.10` default (make_datasets.py, two call
+                            # sites) that left ~90% of the frozen label artifact validated by CF+FD
+                            # only, contradicting the "3-way cross-validation" invariant this key
+                            # states; requested in audit/contract_requests_2.md item 3, which flagged
+                            # it as the item to look at first. Governs the MC leg's coverage of BOTH
+                            # axes it is applied to: fraction of hypercube PARAMETER POINTS
+                            # (generate_train_val) and fraction of grid ROWS per tau slice
+                            # (generate_anchor_grids) — both read this one value; there is no
+                            # remaining code default independent of the contract.
+    mc_coverage_note: >
+      vanna has NO Monte Carlo estimator (oracle.py: heston_greeks_mc returns NaN for vanna) --
+      mc_coverage_frac=1.0 does not create a vanna MC leg. vanna's cross-validation panel is
+      CF+FD, plus ADI where the fourth leg is required; this is existing oracle.py behavior
+      (cross_validate excludes absent legs), not a code change made by this amendment.
   fourth_leg:
     method: craig_sneyd_adi
     required_for: [near_feller, feller_violating_volvol, "any sampled point with feller_ratio in [0.40, 0.60]"]
