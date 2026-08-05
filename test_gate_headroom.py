@@ -156,11 +156,15 @@ def test_sigma_zero_reproduces_oracle():
 
 
 def test_binding_delta_clip_is_reported():
-    """G2: `amp` is calibrated on the UNCLIPPED field, and the [-0.05, 1.05]
-    clip is applied afterwards. Where it binds, the delivered gamma error is
-    smaller than sigma_gamma_target, so the measured spread is understated and
-    the gate is conservative — safe direction, wrong axis label. The clip is
-    NOT changed; it is made visible.
+    """G2 as corrected by contract AM3-1: `amp` is calibrated on the UNCLIPPED
+    field, and the [-0.05, 1.05] clip is applied afterwards. Where it binds the
+    corruption is SATURATED, not attenuated — the arm is flat in S, so its gamma
+    error there is the oracle's own -Gamma, and across the decision rungs the
+    delivered gamma scale EXCEEDS its label instead of falling short of it (the
+    ratios are locked in by
+    test_effective_gamma_can_EXCEED_the_nominal_in_the_decision_band). The clip
+    is NOT changed; it is made visible, because clipped_frac is the contract's
+    region-of-validity statistic.
 
     Deep-ITM/OTM states sit at delta ~ 1 and ~ 0, exactly where the bounds are.
     """
@@ -173,8 +177,8 @@ def test_binding_delta_clip_is_reported():
     assert p.clipped_fraction != p.clipped_fraction          # NaN before any eval
     p.evaluate(S, v, tau, 100.0)
     assert p.clipped_fraction > 0.0, (
-        "a binding clip must be visible: the delivered corruption is weaker "
-        "than the sigma_gamma the gate table is labelled with")
+        "a binding clip must be visible: the delivered corruption is no longer "
+        "the sigma_gamma the gate table is labelled with")
     assert 0.0 < p.clipped_fraction <= 1.0
 
     # sigma = 0 delivers exactly the oracle -> nothing can clip

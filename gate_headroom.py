@@ -101,18 +101,23 @@ _DELTA_CLIP = (-0.05, 1.05)
 _CLIPPED_NOTE = (
     "`clipped_frac` is the fraction of delta evaluations on which the "
     f"[{_DELTA_CLIP[0]}, {_DELTA_CLIP[1]}] delta clip BOUND. The field amplitude "
-    "is calibrated on the UNCLIPPED field, so wherever the clip binds the "
-    "DELIVERED gamma error is smaller than the sigma_gamma this row is labelled "
-    "with: the spread is understated and the gate is conservative (the safe "
-    "direction for a go/no-go, but the sigma axis is then not the axis it is "
-    "labelled with). A value of 0 means the sigma axis is exact. "
-    "MEASURED CAVEAT (fix batch 3): that 'smaller, so conservative' reading is "
-    "NOT uniform. Where the clip binds, the corrupted hedger is FLAT in S, so "
-    "its gamma error there is the oracle's own -Gamma; across the contract's "
-    "DECISION rungs the DELIVERED gamma scale comes out LARGER than the nominal "
-    "label (up to ~1.5x), and only falls below it once the clip binds nearly "
-    "everywhere. Read the direction off `sigma_gamma_effective` below — do not "
-    "assume it.")
+    "is calibrated on the UNCLIPPED field, and the clip does NOT attenuate that "
+    "corruption — it SATURATES it. Where the clip binds, the corrupted hedger "
+    "holds a position that is FLAT in S, so its gamma error there is the "
+    "ORACLE's own -Gamma: a small calibrated gamma error is REPLACED by a "
+    "larger uncalibrated one. Measured across the contract's DECISION rungs "
+    "(AM3-1) the DELIVERED gamma scale EXCEEDS its nominal label — 1.21x at "
+    "sigma_rel 0.10, 1.41x at 0.15, 1.54x at 0.20 — and only falls below it "
+    "once the clip binds nearly everywhere (0.80 and above), outside any rung "
+    "this contract decides on. A binding clip therefore does NOT make the gate "
+    "conservative: comparing the pilot against the NOMINAL sigma is "
+    "ANTI-conservative in exactly that band. A value of 0 means the sigma axis "
+    "is exact; otherwise read the delivered scale off `sigma_gamma_effective` "
+    "below rather than assuming its direction. The region of validity exists "
+    "not because the mapping is biased in a known direction but because a "
+    "saturated, bang-bang hedger is a STRUCTURALLY DIFFERENT OBJECT from the "
+    "smooth-Greek-error PINN the gate stands in for (contract "
+    "region_of_validity.interpretation).")
 
 # AM2-3b: what the two DELIVERED sigma columns mean, stated once and reused by
 # the report so the nominal/effective distinction cannot be read past.
@@ -332,11 +337,13 @@ class NoisyOracleProvider:
         if mode == "iid":
             self.sigma_delta = float(np.std(self.eta(*ref_states)))
             self._rng = np.random.default_rng([self.seed, _STREAM_IID])
-        # audit G2: `amp` is calibrated on the UNCLIPPED field and _DELTA_CLIP is
-        # applied afterwards, so wherever the clip binds the DELIVERED gamma error
-        # is smaller than sigma_gamma_target and the measured spread is understated
-        # (conservative, but the sigma axis is then not the axis it is labelled
-        # with). The clip is unchanged; these counters make a binding clip visible.
+        # audit G2 / contract AM3-1: `amp` is calibrated on the UNCLIPPED field and
+        # _DELTA_CLIP is applied afterwards. The clip does not attenuate the
+        # corruption, it SATURATES it — where it binds the arm is FLAT in S, so the
+        # DELIVERED gamma error there is the oracle's own -Gamma, which across the
+        # DECISION rungs EXCEEDS sigma_gamma_target (1.21x at sigma_rel 0.10, 1.41x
+        # at 0.15, 1.54x at 0.20). The clip is unchanged; these counters make a
+        # binding clip visible and `effective_sigmas` measures what was delivered.
         self._n_clipped = 0
         self._n_delta = 0
 
@@ -371,8 +378,12 @@ class NoisyOracleProvider:
     def clipped_fraction(self) -> float:
         """Fraction of delta evaluations _DELTA_CLIP actually bound on, over the
         provider's whole life (NaN before the first evaluate). A non-zero value
-        means the delivered corruption was WEAKER than `sigma_gamma_target` on
-        that fraction of states, so the arm's spread is understated (audit G2).
+        means the corruption was SATURATED on that fraction of states, NOT
+        weakened: a clipped hedger is flat in S, so its gamma error there is the
+        oracle's own -Gamma. Across the contract's decision rungs that makes the
+        DELIVERED gamma scale LARGER than `sigma_gamma_target`, not smaller
+        (AM3-1) — read it off `effective_sigmas`. This number is the contract's
+        region-of-validity statistic (`clipped_frac_max`).
         Bookkeeping only — `evaluate` stays a pure function of state."""
         if self._n_delta == 0:
             return float("nan")
