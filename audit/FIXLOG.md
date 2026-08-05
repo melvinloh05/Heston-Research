@@ -1268,3 +1268,253 @@ and `6786c0a` (amendment 2), neither of which is this batch's work.
   observable the assertion names, each documented at its item: five verdict strings in
   `test_analyze_results.py` (ITEM 5) and the three precheck column names in one assertion of
   `test_eval_greeks.py` (ITEM 8a). Every one keeps its substantive check. ✅
+
+---
+---
+
+# FIXLOG — fix batch 4 (pre-freeze cleanup)
+
+Branch `fix/pre-freeze-cleanup` off `contract/v6-amendment-3`. Baseline before the batch:
+**259 passed**. After the batch: **261 passed** (2 new tests, 0 pre-existing tests edited).
+
+All housekeeping. **No numerical result moves, and no verdict string can differ** — the
+batch is one prose correction, one single-source rewire of a guard constant, and two
+documents. The one behavioural surface that changed at all is the budget check's floors,
+which resolve to the same `(20480, 4096)` they had before at today's config.
+
+---
+
+## ITEM 0 — the reported working-tree changes DO NOT EXIST
+
+**No commit.** Reported as required before anything else was touched.
+
+The prompt describes uncommitted changes in `Hedging_backtest.py`, `gate_headroom.py`,
+`test_contract_thresholds.py` and `test_gate_headroom.py`. There are none:
+
+```
+$ git diff --stat HEAD -- Hedging_backtest.py gate_headroom.py \
+      test_contract_thresholds.py test_gate_headroom.py
+(no output)
+
+$ git diff HEAD --stat
+ .claude/settings.local.json | 3 ++-
+
+$ git stash list
+(empty)
+```
+
+The working tree at `aa2b105` held exactly **one** modified tracked file,
+`.claude/settings.local.json` (+1 line: a `Bash(python -c ' *)` permission-allowlist entry).
+That is Claude Code harness config, not research code — it touches no result and no test.
+It was left uncommitted; committing harness permissions is the human's call.
+
+Everything else `git status` showed was **untracked**, and all of it is audit/doc output
+from the audit sessions: `audit/FINDINGS.md`, `audit/QUESTIONS.md`, `audit/SUMMARY.md`,
+`audit/dataset_sizing.md`, `audit/mask_neutrality.md`, `audit/progress.md`,
+`audit/test_gaps.md`, the 30-odd `audit/repro/*` probe scripts and outputs, plus `README.md`,
+`audit.md`, `layout.md` and `docs/STATUS_2026-07-29.md`.
+
+The four named files are clean because their batch-3 work **is** committed — `git log` puts
+their last touches at `266a3e0` (E8), `78e0d57` (E6), `0d56eda` (E5), `4dfea88` (E4),
+`272e591` (E3) and `a18008b` (E1), all on the current branch's history. Nothing was
+committed blind and nothing was discarded; there was nothing to commit or discard. The
+premise of the item does not hold, so no decision was needed.
+
+---
+
+## ITEM 1 — the clip saturates the corruption; it does not attenuate it
+
+**Commit** `a75966f` · 2 files, prose only.
+
+**What was wrong.** Amendment 3 (AM3-1) corrected the conservatism claim at four contract
+sites after batch 3 measured its direction to be false. The identical claim survived at four
+CODE sites, which therefore now contradicted the pre-registration they implement:
+
+| site | the surviving claim |
+|---|---|
+| `gate_headroom.py:106` (`_CLIPPED_NOTE`) | "the spread is understated and the gate is conservative (the safe direction for a go/no-go...)" |
+| `gate_headroom.py:337-338` (`__init__` comment) | "the DELIVERED gamma error is smaller than sigma_gamma_target ... (conservative, ...)" |
+| `gate_headroom.py:375` (`clipped_fraction` docstring) | "the delivered corruption was WEAKER than `sigma_gamma_target` ... the arm's spread is understated" |
+| `test_gate_headroom.py:161-162` (test docstring) | "the delivered gamma error is smaller than sigma_gamma_target ... the gate is conservative" |
+
+**The correction applied at each.** Per AM3-1: the clip does not remove corruption, it
+SATURATES it. Where it binds, the corrupted hedger holds a position FLAT in S, so its gamma
+error there is the ORACLE's own `-Gamma` — a small calibrated gamma error is *replaced* by a
+larger uncalibrated one. Measured delivered/nominal across the decision band: **1.21x at
+sigma_rel 0.10, 1.41x at 0.15, 1.54x at 0.20**; suppression only takes over at 0.80 and
+above, outside any rung the contract decides on. Each site now also points at the reason a
+region of validity exists — a saturated bang-bang hedger is a structurally different object
+from the smooth-Greek-error PINN the gate stands in for — rather than at "biased in a safe
+direction".
+
+**`_CLIPPED_NOTE` specifically.** Batch 3 had appended a `MEASURED CAVEAT` paragraph *after*
+the false sentence, so a reader met the wrong claim first and the correction as a
+qualification. The corrected statement now **leads**; the false sentence is gone, not
+qualified. This string is reused by `headroom_report.md` and the `run_gate` result, so it is
+the sentence a human meets at the go/no-go.
+
+Also corrected, same class, one line below the named sites: the assertion message at
+`test_gate_headroom.py:172-174` ("the delivered corruption is weaker than the sigma_gamma the
+gate table is labelled with"). `test_gate_headroom.py:293` was left alone — it quotes the G2
+claim in order to refute it, and is already correct.
+
+**Confirmation that no expression changed.** Beyond reading the diff: both files were parsed
+and every string literal blanked to a sentinel, then the ASTs compared against `HEAD`.
+
+```
+gate_headroom.py: AST-identical-modulo-string-literals = True
+test_gate_headroom.py: AST-identical-modulo-string-literals = True
+```
+
+Every byte that changed is inside a docstring, a comment or a message string. **Suite 259**
+(unchanged — no test added; the existing
+`test_effective_gamma_can_EXCEED_the_nominal_in_the_decision_band` already locks the
+measured ratios that this prose now states).
+
+---
+
+## ITEM 2 — the info-matching budget reads N from the config
+
+**Commit** `89f01ed` · 2 files, +54 / −11. **2 new tests.**
+
+**What was wrong.** `make_datasets.py:70` held `N_INFO = 4096` with the comment *"N = pinn
+shared.n_price_points"* — the value re-typed beside its source, with nothing reading the
+source and no test tying them. `TRAIN_MIN_ROWS = 5 * N_INFO` and `VAL_MIN_ROWS = N_INFO`
+derived from it, and those are the floors of the retained-row budget check. That check is the
+guard on the information-matching cap 5N, i.e. **the check that exists to prevent I1** — the
+failure where the top rungs of `run_info_matching`'s ladder train on bit-identical data and a
+flat Gamma-RMSE curve is indistinguishable from a real plateau. A change to `n_price_points`
+in `pinn_config.yaml` would have left the guard validating against a stale 4096 and re-opened
+I1 silently. Same single-source-of-truth class as C1, and named as such by
+`audit/dataset_sizing.md` §1.
+
+**Diff summary.**
+- `info_budget(pinn_raw) -> (5N, N)` (new): `N` read from `shared.n_price_points`. **No
+  default** — a missing key raises rather than falling back to 4096.
+- `N_INFO` / `TRAIN_MIN_ROWS` / `VAL_MIN_ROWS` deleted.
+- `generate_train_val`'s `min_train_rows` / `min_val_rows` defaults are `None`, resolved from
+  `info_budget(pinn_raw)` at the point the config is already loaded. Explicit arguments still
+  override, so the smoke-test knobs are unaffected.
+- The manifest's `budget` block now records `n_price_points` — the N a frozen artifact's
+  budget check was performed against.
+
+**Tests.**
+- `test_info_budget_is_the_configs_n_not_a_literal` — C1-style parity: the floors equal
+  `shared.n_price_points` navigated independently out of the YAML; no `N_INFO` attribute
+  survives; the module's **AST** contains no numeric `4096` (an AST check, not a text grep,
+  so prose may still name the value it used to be); and a config without the key raises.
+- `test_budget_check_tracks_a_mutated_n_price_points` — the requested mutation test. A COPY
+  of `pinn_config.yaml` with `n_price_points` changed: at **N=2** generation passes with
+  manifest floors `(10, 2)`, at **N=8** it raises `"< 40 (5N)"`. Both halves are quoted from
+  the mutated config, neither from 4096.
+
+**That the mutation test discriminates** — pinned at the old constant, the passing half fails:
+
+```
+$ generate_train_val(..., min_train_rows=5*4096, min_val_rows=4096)   # old N_INFO behaviour
+budget check: retained TRAIN rows 15 (need >= 20480 = 5N), retained VAL rows 3 ... -> FAIL
+OLD-CONSTANT BEHAVIOUR: raised -> budget check failed: retained TRAIN rows 15 < 20480 (5N)
+```
+
+**Suite 261.**
+
+---
+
+## ITEM 3 — the sizing report's three undeclared inputs
+
+**Commit** `7167a9e` · `audit/contract_requests_2.md` (new) + `audit/dataset_sizing.md`.
+**No contract edit.**
+
+`audit/contract_requests_2.md` names `val_param_frac = 0.20`, `n_skt = 64` and
+`mc_subset_frac = 0.10` — value, every site each lives at, what the contract says today, what
+breaks if it changes, and a proposed key shape. Three things in it are worth the human's eye
+before the freeze:
+
+1. **`val_param_frac` exists twice.** `make_datasets.generate_train_val`'s kwarg (which
+   determines the `split` array actually written) and a **bare `0.20` literal** in
+   `train_pinn.py:288`, `ArmDataset`'s fallback for an artifact with no `split` key. They can
+   drift. Sizing impact: at 0.25 the repo default `n_param_points=448` goes from **+2.4 %
+   (PASS)** to **−4.0 % (FAIL)**; the recommended 512 drops from +15.9 % to +8.7 %.
+2. **`n_skt` has two different answers** — 64 in `make_datasets`, **16** in `make_labels`.
+   At `n=512`, `n_skt=16` yields 5 934 train rows against the 20 480 floor, and `make_labels`
+   runs no budget check. Worse, the memo's per-category mask rates were *measured* at 64 on
+   the shared `(S,K,tau)` draw that 64 produces, so a change needs re-measuring, not
+   rescaling.
+3. **`mc_subset_frac` is the one I would look at first, and not for sizing.** Its sizing
+   effect is genuinely negligible (+0.0006 on the composed mask rate). But at 0.10, **~90 %
+   of the frozen label artifact is cross-validated by TWO legs**, while the contract declares
+   `oracle.three_way_validation` and CLAUDE.md states the invariant as "3-way
+   cross-validation (CF-analytic / FD-on-COS / MC)". There is a defensible reading (MC is the
+   expensive leg; the ADI band clause already covers where CF-diff is least trustworthy) —
+   but it is a live gap between a contract invariant and what the code does, set by an
+   undeclared default, and it should be settled before an artifact is frozen rather than in
+   review afterwards. Separately: the same name means a fraction of *parameter points* in
+   `generate_train_val` and a fraction of *grid rows per tau slice* in
+   `generate_anchor_grids` — two axes sharing one default.
+
+`audit/dataset_sizing.md` was annotated at the three places ITEM 2 falsified it (§0.2, §1's
+"fragility worth a separate ticket", assumption 6): they described `N_INFO` as a live hazard,
+which it no longer is. Struck through rather than deleted, so the record of what was found
+survives. No sizing number changed — the floors resolve to the same `(20480, 4096)`.
+
+---
+
+## ITEM 4 — Prompt J: no code-level defect. Skipped, as instructed.
+
+**No commit.**
+
+`audit/mask_neutrality.md`'s own verdict (§ Answer up front, point 6): *"No number in the
+study is currently wrong, and the mask cannot be removed — a masked point has no trusted
+label by construction. What is missing is reporting."* §8 "What is NOT wrong" confirms
+arm-vs-arm comparability by execution, and confirms the confirmatory cell, order attribution,
+dose-response, mechanism adjudication and the gate are untouched by the mask entirely.
+
+Everything the report proposes is in §7, and all three items are **contract** changes:
+**C-M1** (declare that a table carrying an OOD Greek metric must carry its scored-point
+count), **C-M2** (declare how a regime whose eval population is largely removed is reported —
+`feller_violating_volvol` masks 68.7 % and every tau slice from 0.68 to 1.00 has zero
+survivors), **C-M3** (declare that cross-regime OOD comparison is not like-for-like, since
+mask strength tracks oracle leg routing). Per the item's instruction these were **not acted
+on**. Note that the code consequence the report attaches to C-M1 — adding `n_unmasked` to
+`AGG_COLS` and `THRESHOLD_COLS` — is a consequence *of the contract decision*, so
+implementing it would be acting on the contract question. Left alone.
+
+**Two gaps the report names that are code-shaped, and were still left for the human**, because
+each is a feature addition rather than a defect and this batch is housekeeping:
+
+- `mask_neutrality_report` is called only from `generate_train_val`, never from
+  `generate_anchor_grids` (report §6). The contract's three neutrality checks therefore run
+  on the **training** artifact, where the mask is arm-neutral by construction, and never on
+  the **evaluation** grids, where the mask actually filters the primary metric. The report
+  itself files this as "optionally, and separately from the contract".
+- `uncertainty_table.csv` carries a per-regime, per-Greek `mask_rate` and **has no consumer
+  anywhere in the repo** (written, never read). It would be C-M1's natural data source.
+
+---
+
+## Open for the human (batch 4)
+
+1. **Three dataset-sizing inputs need a contract decision before the freeze** — ITEM 3 and
+   `audit/contract_requests_2.md`. The `mc_subset_frac` / `three_way_validation` tension is
+   the substantive one; the other two are durability of the sizing recommendation.
+2. **The mask-neutrality contract questions C-M1/C-M2/C-M3** — ITEM 4, `audit/mask_neutrality.md`
+   §7. Untouched by instruction.
+3. **Neutrality checks never run on the anchor grids**, and `uncertainty_table.csv` has no
+   consumer — ITEM 4. Both are additions, not fixes; flagged rather than done.
+4. **`.claude/settings.local.json` is modified and uncommitted** — a permission-allowlist
+   entry. Harness config; commit or discard as you prefer.
+
+## Rules compliance (batch 4)
+
+- Branch `fix/pre-freeze-cleanup`, one commit per item (ITEM 0 and ITEM 4 produced no
+  commit, both by finding rather than by omission). ✅
+- Full suite green after every commit: 259 (ITEM 1) → 261 (ITEM 2) → 261 (ITEM 3). Baseline
+  259; 2 new tests. ✅
+- **No YAML edited.** ITEM 4 did not require one, so the batch's exception was not used.
+  `heston_benchmark_v6.yaml`, `pinn_config.yaml` and `hedging_config.yaml` are all
+  untouched. ✅
+- **Zero pre-existing tests edited.** ITEM 1 rewrote two docstrings and one assertion
+  *message* in `test_gate_headroom.py`; no assertion, and no substantive check, changed —
+  confirmed by AST equality. ✅
+- No refactors. ITEM 1 is prose-only by AST proof; ITEM 2 touches only the constant it was
+  asked to rewire and the two call sites that consume it. ✅
