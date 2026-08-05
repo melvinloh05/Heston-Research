@@ -51,17 +51,52 @@ oracle_headroom_gate:
   # (audit/fixlog/g2_measured.txt, field mode, confirmatory cell, n_paths=256, 2 seeds):
   #     sigma_rel  0.1 -> clipped_frac 0.061   0.2 -> 0.215   0.4 -> 0.780   0.8 -> 0.960
   # `amp` is calibrated so std(d_eta/dS) equals sigma_gamma_target on the UNCLIPPED field
-  # and the clip is applied afterwards, so above ~0.2 the DELIVERED corruption diverges
-  # sharply from its label. The clip STAYS as it is: it is what keeps the corrupted arm a
+  # and the clip is applied afterwards, so the DELIVERED corruption diverges from its label.
+  # The clip STAYS as it is: it is what keeps the corrupted arm a
   # plausible hedger, and without it the spread would be dominated by leverage rather than
   # by gamma error. What changes is where the ladder sits and what the gate is allowed to
   # conclude. FIXED BEFORE THE PILOT RAN: at the time of this amendment no pilot fit and no
   # gate run existed (data/ and results/ do not exist), so the region of validity below was
   # chosen without knowing which side of it sigma_gamma_pilot would land on.
   # ---------------------------------------------------------------------------
+  # AM3-1 — THE DIRECTION OF THAT DIVERGENCE WAS WRONG, AND THE RATIONALE IS REPLACED.
+  # AM2-3 (and fix batch 2's G2 note it quoted) assumed the clip can only REMOVE
+  # corruption: a clipped arm was said to deliver LESS gamma error than its label, so its
+  # spread was understated and the gate was "conservative". Fix batch 3 emitted the
+  # delivered quantity and MEASURED the opposite across the whole decision band
+  # (audit/FINDINGS_ADDENDUM.md N8; gate seed 42, 2000-state reference cloud;
+  # sigma_gamma_effective / nominal sigma_gamma_target):
+  #     sigma_rel  0.05 -> 1.00   0.10 -> 1.21   0.15 -> 1.41   0.20 -> 1.54
+  #                0.40 -> 1.40   0.80 -> 0.62   3.00 -> 0.17
+  # (the delta-error counterpart, sigma_delta_effective / its unclipped scale, runs
+  #  1.00 / 1.05 / 1.16 / 1.28 / 1.34 / 0.82 / 0.23 over the same rungs.)
+  # WHY the clip AMPLIFIES: where it binds, the corrupted arm holds a position that is FLAT
+  # in S, so its delta error there is (bound - delta(S)) and its gamma error is the ORACLE's
+  # own -Gamma, which is LARGER than the calibrated field's until the field itself is huge.
+  # The clip does not attenuate the corruption; it REPLACES a small calibrated gamma error
+  # with a larger uncalibrated one. Suppression only takes over once the clip binds nearly
+  # everywhere (0.80, 3.00 above), i.e. outside any rung this contract decides on.
+  # WHY A REGION OF VALIDITY EXISTS (the corrected reason). NOT because the corruption is
+  # understated and the gate is therefore safe. Because a heavily-clipped arm is a
+  # STRUCTURALLY DIFFERENT OBJECT from the thing the gate stands in for: a SATURATED,
+  # bang-bang hedger pinned at a delta bound over much of the state space, not a smooth
+  # perturbation of the oracle's Greeks. A trained PINN's Greek error is smooth in state, so
+  # the spread-to-gamma-error mapping measured on a saturated arm does not transfer to it —
+  # in EITHER direction, and regardless of whether the delivered error happens to exceed or
+  # fall short of its label. The gate's ceiling means something only where the corrupted arm
+  # is still a smooth perturbation; `clipped_frac` is the statistic that says whether it is.
+  # THE ANTI-CONSERVATIVE FAILURE MODE THIS FORBIDS. Comparing sigma_gamma_pilot against
+  # NOMINAL sigma_rel is anti-conservative in exactly the amplifying band: at nominal 0.15
+  # the delivered error is 1.41x, so a spread actually produced by a ~0.21-sized gamma error
+  # would be credited to a 0.15-sized one — returning a GO when the delivered gamma error
+  # needed to produce that spread EXCEEDS the pilot's. It would authorize compute on a
+  # measured ceiling the trained model cannot reach.
+  # `effective_sigma_reporting.compare_pilot_against: sigma_gamma_effective` is what
+  # prevents that; it is a correctness requirement, not a reporting nicety.
+  # ---------------------------------------------------------------------------
   sigma_rel_ladder:            # AM2-3a — replaces gate_headroom.py:82 _SIGMA_REL_DEFAULT (0.1, 0.2, 0.4, 0.8)
-    decision: [0.05, 0.10, 0.15, 0.20]        # the ONLY rungs the DECISION section may fire on
-    diagnostic: [0.40]                        # reported and plotted, NEVER a decision input: ~78% clipped, outside region_of_validity
+    decision: [0.05, 0.10, 0.15]              # AM3-2 — the ONLY rungs the DECISION section may fire on; 0.20 DEMOTED, see production_scale_measurement
+    diagnostic: [0.20, 0.40]                  # reported and plotted, NEVER a decision input: 24.7% and 81.4% clipped at production scale
     spacing_rationale: >
       The clip's bite roughly TRIPLES between sigma_rel 0.1 (0.061) and 0.2 (0.215) and then
       saturates (0.780 at 0.4, 0.960 at 0.8), so resolution is worth buying below 0.2 and
@@ -72,6 +107,30 @@ oracle_headroom_gate:
       guessed. 0.40 is retained as the labelled diagnostic that exhibits the saturation.
       0.80 is DROPPED: at 96% clipped the corrupted provider is a bang-bang hedger, not a
       gamma-error perturbation, and its spread measures leverage, not Greek error.
+    production_scale_measurement: >
+      AM3-2. The rationale above rests on a SMOKE-SIZE measurement (n_paths=256, 2 seeds).
+      Fix batch 3 re-measured clipped_frac at PRODUCTION scale before any pilot existed
+      (audit/fixlog/g2_production_scale.txt; n_paths=10000, the 10 confirmatory seeds, one
+      gate run per seed so the seed spread is visible), mean [min, max] over seeds:
+        0.05 -> 0.0027 [0.0024, 0.0029]    0.10 -> 0.0737 [0.0712, 0.0756]
+        0.15 -> 0.1484 [0.1449, 0.1516]    0.20 -> 0.2470 [0.2429, 0.2513]
+        0.40 -> 0.8137 [0.8102, 0.8194]
+      Production scale raises clipped_frac at every rung by ~11-20% relative, so the
+      smoke-size numbers the ladder was cut against were systematically LOW.
+      TWO CONSEQUENCES, both recorded here rather than absorbed silently:
+      (1) 0.05 and 0.15 — which AM2-3a could only BOUND by the monotonicity argument — are
+      now MEASURED, at 0.0027 and 0.1484, comfortably inside region_of_validity. The
+      monotonicity argument held, and those two rungs need no further defence.
+      (2) 0.20 is DEMOTED to diagnostic. Its seed MEAN (0.2470) sits inside
+      clipped_frac_max = 0.25 but its per-seed values STRADDLE the bound: 3 of 10 seeds are
+      outside it, max 0.2513, seed std 0.0030. A rung whose decision-eligibility depends on
+      which seeds were drawn is not a decision rung. The small seed std is what settles it:
+      this is the rung sitting ON the bound, not noise around a comfortable value.
+      clipped_frac_max was deliberately NOT raised to keep 0.20 — see the bound's own note.
+      The DECISION band is therefore nominal [0.05, 0.15] at 0.05 spacing, which in
+      DELIVERED terms (AM3-1 amplification) tops out at sigma_gamma_effective ~ 0.21 x
+      rms(Gamma_oracle). If the pilot lands above that, see ladder_extension_contingency —
+      declared below, before any pilot ran, so the response is not chosen after the fact.
   effective_sigma_reporting:   # AM2-3b — nominal sigma_rel labels the field BEFORE the clip; the gate must also report what was DELIVERED
     sigma_delta_effective: "std over the reference cloud of the DELIVERED post-clip delta error, clip(delta + eta) - delta"
     sigma_gamma_effective: "std over the reference cloud of d/dS of that delivered delta error -- the post-clip counterpart of the calibration statistic std(d_eta/dS)"
@@ -82,16 +141,31 @@ oracle_headroom_gate:
       GAMMA rmse, so the pilot point is compared against sigma_gamma_effective; the two
       effective quantities are in different units and only that one is commensurable with
       the pilot. sigma_delta_effective is declared because it is the direct measure of how
-      much of the intended corruption the clip removed. EMISSION IS A CODE CHANGE
+      much the clip CHANGED the intended corruption -- AM3-1: "removed" is what this note
+      said and it is wrong in the decision band, where the clip ADDS (1.05x to 1.28x the
+      unclipped delta-error scale at nominal 0.10 to 0.20). EMISSION IS A CODE CHANGE
       (gate_headroom.py) and is NOT part of this amendment: today the gate reports nominal
       sigma_rel plus clipped_frac only.
+    emission_status: >
+      AM3-1 status update, superseding the last sentence above: fix batch 3 ITEM 3 IMPLEMENTED
+      the emission. Both quantities are now on every headroom.csv row, every summary row and
+      the report table beside the nominal sigma, and the pilot comparison reads
+      compare_pilot_against from this block rather than assuming a field name. The clause is
+      no longer a declaration awaiting code.
   region_of_validity:          # AM2-3c — where the gate's spread->sigma mapping means anything at all
     statistic: clipped_frac                   # per-arm fraction of delta evaluations on which the [-0.05, 1.05] delta clip BOUND; emitted by fix batch 2 (G2), gate_headroom.py _DELTA_CLIP
-    clipped_frac_max: 0.25                    # the smallest round bound admitting the whole DECISION ladder as measured (0.215 at its top rung, 0.20) while excluding 0.40 (0.780). Chosen to fit the ladder, with headroom for seed/cell variation in the measured 0.215 -- not derived from an independent principle
+    clipped_frac_max: 0.25                    # AM3-2: UNCHANGED at 0.25, deliberately. AM2-3c chose it as the smallest round bound admitting the whole DECISION ladder as then measured (0.215 at 0.20), i.e. FITTED to the ladder. Production scale puts 0.20 at 0.2470 mean / 0.2513 max; raising the bound so that the same ladder still passes would be circular -- refitting a fitted bound against the data that broke it. The BOUND STAYS and the RUNG WAS DEMOTED instead (sigma_rel_ladder.production_scale_measurement)
     interpretation: >
-      Above clipped_frac_max the delivered corruption is dominated by the clip rather than
-      by the calibrated field: the arm's spread is no longer a monotone reading of a gamma
-      error of the labelled size, so spread cannot be mapped back to sigma. Rows above the
+      AM3-1 (replaces the previous wording, which said the delivered corruption above the
+      bound is "dominated by the clip rather than by the calibrated field" and left the
+      reader to infer that it is therefore WEAKER than its label -- measured, it is
+      STRONGER over the whole decision band). Above clipped_frac_max the corrupted arm has
+      stopped being a smooth perturbation of the oracle's Greeks and become a SATURATED
+      hedger, pinned at a delta bound over much of the state space, whose gamma error is
+      the oracle's own -Gamma rather than the calibrated field's. Its spread therefore
+      cannot be mapped back to a sigma at all: not because the mapping is biased in a known
+      direction, but because the object being measured is no longer the object the gate
+      stands in for -- a trained PINN, whose Greek error is smooth in state. Rows above the
       bound are DIAGNOSTIC ONLY and must be labelled as such wherever they appear.
     if_pilot_outside: >
       If sigma_gamma_pilot lands at an effective sigma whose clipped_frac exceeds
@@ -99,6 +173,42 @@ oracle_headroom_gate:
       no-go -- and the ladder must be revisited (and this clause re-decided) BEFORE any go
       decision. An inconclusive gate does not authorize training spend, and must not be
       read as a failed gate.
+  ladder_extension_contingency:   # AM3-3 — what happens if the pilot lands ABOVE the decision band. DECLARED BEFORE ANY PILOT RAN (see declared_before_pilot): no pilot fit and no gate run exist at the time of this amendment, so the response below is not chosen with knowledge of where sigma_gamma_pilot fell. Re-centring a ladder after seeing that would be post-hoc
+    trigger: >
+      The pilot's sigma_gamma_effective exceeds the top DECISION rung's -- nominal 0.15,
+      which delivers ~0.21 x rms(Gamma_oracle) after AM3-1 amplification. In that state the
+      pilot is outside the region of validity, gate_headroom reports the DECISION section as
+      INCONCLUSIVE (region_of_validity.if_pilot_outside), and no training spend is
+      authorized until this clause has been worked through.
+    extension_rungs: [0.20, 0.25]             # the ONLY rungs that may be added, IN THIS ORDER. 0.20 is the rung AM3-2 demoted, re-entering as a CANDIDATE, not restored; 0.25 follows it. Nothing above 0.25 may be added under this clause -- 0.40 is already 81% clipped and is a diagnostic by pre-registration
+    added_as: diagnostic                      # a new rung enters the ladder DIAGNOSTIC and is swept, reported and plotted as such; it is NOT decision-eligible on arrival
+    preconditions_for_decision_eligibility: >
+      An extension rung becomes decision-eligible ONLY after clipped_frac has been
+      RE-MEASURED for it at PRODUCTION scale -- n_paths = hedging_simulation.paths.
+      n_paths_per_cell, meta.seeds_confirmatory_cell seeds, ONE gate run per seed, the
+      protocol of audit/repro/e2_g2_production_scale.py -- and BOTH its seed mean AND its
+      per-seed MAXIMUM sit at or below clipped_frac_max. The per-seed maximum is required
+      because that is exactly the test 0.20 failed (mean 0.2470 inside, max 0.2513 outside,
+      3 of 10 seeds over): eligibility that depends on which seeds were drawn is not
+      eligibility. The measurement is written to audit/fixlog/ before the rung is promoted.
+    clipped_frac_max_stays: 0.25              # FIXED for this re-derivation. The bound may NOT be widened to admit an extension rung; that would make the precondition vacuous and repeat the circularity AM3-2 refused
+    expected_outcome: >
+      Stated honestly in advance, because it is the likely one: clipped_frac is monotone
+      non-decreasing in sigma_rel (every arm scales ONE common frozen field by amp), and
+      0.20 ALREADY straddles the bound at production scale, so with clipped_frac_max fixed
+      at 0.25 an extension will probably NOT yield an eligible rung. If it does not, the
+      honest reading is that the gate cannot bracket a pilot that large AT THIS DELTA CLIP,
+      and the levers are the contract's own (decision_rule: rebalancing frequency, then
+      misspecification severity) -- NOT the bound, NOT the clip, and NOT a wider ladder.
+      This clause exists to make that outcome a pre-registered result rather than a
+      negotiation held after the number is known.
+    reporting: >
+      A gate result obtained on an extended ladder is reported AS an extended-ladder result
+      -- the ladder actually executed, which rungs were added, when each was measured and
+      promoted, and the fact that the original pre-registered ladder did not bracket the
+      pilot. It is NEVER presented as an original-ladder result, and the headline gate
+      reading keeps the original ladder's answer (INCONCLUSIVE) alongside it.
+    declared_before_pilot: true               # AM3-3: at the time of this amendment data/ and results/ do not exist -- no pilot fit, no gate run, no sigma_gamma_pilot
   motivation: "Sakuma Table 5 (oracle ~= network hedge) is the power warning."
   runs_before: all_training
 

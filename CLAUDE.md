@@ -75,9 +75,22 @@ wins and the code changes.
   `null` = NOT EVALUATED (artifact legitimately absent), `error` = evaluation attempted and
   FAILED (artifact present but corrupt). Never collapse the two in any table, memo or figure.
 - Gate σ ladder and its region of validity: `oracle_headroom_gate.{sigma_rel_ladder,
-  effective_sigma_reporting, region_of_validity}` (AM2-3) — decision rungs ≤0.20 only, 0.40
-  diagnostic-only, and a gate whose pilot lands above `region_of_validity.clipped_frac_max`
+  effective_sigma_reporting, region_of_validity}` (AM2-3) — decision rungs ≤0.15 only, 0.20 and
+  0.40 diagnostic-only, and a gate whose pilot lands above `region_of_validity.clipped_frac_max`
   (0.25) is INCONCLUSIVE, not a pass or a no-go. Do not widen or remove the delta clip.
+- The clip AMPLIFIES the delivered gamma error in the decision band (not "understates, so the
+  gate is conservative" — that premise is measured false): see the `AM3-1` block above
+  `sigma_rel_ladder` and `region_of_validity.interpretation`. Comparing the pilot against
+  NOMINAL σ_rel would be anti-conservative; `effective_sigma_reporting.compare_pilot_against`
+  is a correctness requirement.
+- σ_rel = 0.20 is DIAGNOSTIC, not a decision rung — `sigma_rel_ladder.
+  production_scale_measurement` (AM3-2): at production scale its clipped_frac straddles the
+  bound (0.2470 mean / 0.2513 max, 3 of 10 seeds outside). `clipped_frac_max` stays 0.25;
+  never raise it to re-admit a rung.
+- A pilot above the decision band follows `oracle_headroom_gate.ladder_extension_contingency`
+  (AM3-3), declared before any pilot ran: extension rungs enter DIAGNOSTIC, need a
+  production-scale clipped_frac re-measurement with mean AND per-seed max inside the fixed
+  bound, and any result is reported as an extended-ladder result.
 
 ## Declared design deviations
 Pre-registered-machinery deviations that currently live only in code docstrings, recorded here
