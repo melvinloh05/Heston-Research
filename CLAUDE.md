@@ -35,8 +35,8 @@ wins and the code changes.
   treatment across arms. λ selection on VALIDATION ONLY (LockedTestSet enforces). Sourcing of
   the shared λ_pde is a pre-registered decision, not a default: see `lambda_selection` in the
   contract (λ_pde ← `standard_pinn`, λ_gamma/λ_vega ← `rung3_delta_gamma_vega`; contract
-  amendment Q3). Protocol-only until λ selection is rerun — `train.py:135` still sources
-  λ_pde from `rung3_delta_gamma_vega` pending that separate code change.
+  amendment Q3). `train.py:_run_select_lambdas` sources λ_pde from
+  `lambda_selection.lambda_pde.source_arm` (the contract), not a literal.
 - Seeds: 5 default, 10 on the confirmatory cell. Confirmatory cell = (combined perturbation,
   1% TC, baseline regime, rung3 vs standard_pinn).
 - Every run logs: config hash, seed, wall clock, param count, derivative-eval count, peak memory.
