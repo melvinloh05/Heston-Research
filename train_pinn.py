@@ -245,8 +245,9 @@ class ArmDataset:
     Wraps make_labels.build_arm_labels (mask-filtered consensus rows for `arm_cfg`) and
     keeps only the rows whose PARAMETER POINT falls in the requested split. The split is
     read from the P8 train_val artifact's "split" key (0=train, 1=val, one entry per
-    hypercube parameter point); if absent it falls back to an 80/20 by-parameter-point
-    split with rng [seed, 21] (the make_datasets rule) and warns. Splitting by parameter
+    hypercube parameter point); if absent it falls back to a by-parameter-point split at
+    the contract's training_parameterization.sampling.val_param_frac, with rng [seed, 21]
+    (the make_datasets rule) and warns. Splitting by parameter
     POINT (never by (S, K, tau) row) is leakage-safe: a point's rows share its price
     surface.
 
@@ -257,7 +258,8 @@ class ArmDataset:
     """
 
     def __init__(self, labels_npz: str, arm_cfg: PINNConfig, split: str | int, *,
-                 seed: int = 42, warn: bool = True) -> None:
+                 seed: int = 42, warn: bool = True,
+                 contract_path: str = "heston_benchmark_v6.yaml") -> None:
         from make_labels import build_arm_labels   # lazy: avoids train_pinn<->make_labels cycle
 
         assert split in ("train", "val", 0, 1), f"split must be train/val/0/1, got {split!r}"
@@ -267,7 +269,7 @@ class ArmDataset:
         n_points, n_skt = d["mask_any"].shape
         keep = ~d["mask_any"].ravel()                       # C-order over (point, skt)
         retained_point = np.flatnonzero(keep) // n_skt      # param-point index per retained row
-        split_arr = self._resolve_split(d, n_points, seed, warn)
+        split_arr = self._resolve_split(d, n_points, seed, warn, contract_path)
         sel = split_arr[retained_point] == want
         idx = torch.as_tensor(np.flatnonzero(sel), dtype=torch.long)
         self.data = {k: v.index_select(0, idx).contiguous() for k, v in full.items()}
@@ -276,16 +278,21 @@ class ArmDataset:
         self.n_points = int(n_points)
 
     @staticmethod
-    def _resolve_split(d, n_points: int, seed: int, warn: bool) -> np.ndarray:
-        """The P8 split vector (0=train, 1=val), or the declared 80/20 fallback."""
+    def _resolve_split(d, n_points: int, seed: int, warn: bool,
+                        contract_path: str = "heston_benchmark_v6.yaml") -> np.ndarray:
+        """The P8 split vector (0=train, 1=val), or the contract-declared fallback."""
         files = d.files if hasattr(d, "files") else d
         if "split" in files:
             return np.asarray(d["split"]).astype(np.int64).ravel()
+        val_param_frac = float(yaml.safe_load(open(contract_path))
+                               ["training_parameterization"]["sampling"]["val_param_frac"])
         if warn:
             warnings.warn(
-                "labels artifact has no 'split' key; falling back to an 80/20 "
-                "by-parameter-point split with rng [seed, 21]", RuntimeWarning)
-        n_val = min(max(int(round(0.20 * n_points)), 1), n_points - 1)
+                f"labels artifact has no 'split' key; falling back to a "
+                f"{val_param_frac:.0%}-by-parameter-point split (contract "
+                "training_parameterization.sampling.val_param_frac) with rng [seed, 21]",
+                RuntimeWarning)
+        n_val = min(max(int(round(val_param_frac * n_points)), 1), n_points - 1)
         val_idx = np.random.default_rng([int(seed), 21]).choice(n_points, n_val, replace=False)
         split = np.zeros(n_points, dtype=np.int64)
         split[val_idx] = 1

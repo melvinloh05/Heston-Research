@@ -145,8 +145,8 @@ def _part_complete(part_dir: Path, expected: dict) -> bool:
 # ----------------------------------------------------------------------------
 
 def generate_train_val(contract_path: str, pinn_cfg_path: str, out_dir: str, seed: int,
-                       *, n_param_points: int = 448, n_skt: int = 64,
-                       mc_subset_frac: float = 0.10, val_param_frac: float = 0.20,
+                       *, n_param_points: int = 448, n_skt: int | None = None,
+                       mc_subset_frac: float | None = None, val_param_frac: float | None = None,
                        resume: bool = True, chunk_size: int = CHUNK_MAX,
                        leg_kwargs: dict[str, dict] | None = None,
                        min_train_rows: int | None = None,
@@ -160,11 +160,14 @@ def generate_train_val(contract_path: str, pinn_cfg_path: str, out_dir: str, see
     manifest and runs mask_neutrality_report on the merged artifact.
     min_train_rows/min_val_rows are smoke-test knobs; left None (production) they
     are `info_budget(pinn_cfg_path)` — 5N and N with N read from that config, so
-    the guard cannot validate against a stale N.
+    the guard cannot validate against a stale N. n_skt/mc_subset_frac/val_param_frac
+    left None (production) are read from the contract
+    (training_parameterization.sampling.{n_skt,val_param_frac},
+    oracle.three_way_validation.mc_coverage_frac); explicit arguments (smoke tests)
+    still override.
     """
     out = _assert_not_frozen(out_dir)
     assert 1 <= chunk_size <= CHUNK_MAX, f"chunk_size {chunk_size} violates the <= {CHUNK_MAX} rule"
-    assert 0.0 < val_param_frac < 1.0, val_param_frac
     t0 = time.perf_counter()
     contract_sha, pinn_sha = _sha256_file(contract_path), _sha256_file(pinn_cfg_path)
     contract = yaml.safe_load(open(contract_path))
@@ -176,6 +179,12 @@ def generate_train_val(contract_path: str, pinn_cfg_path: str, out_dir: str, see
     min_val_rows = _val_default if min_val_rows is None else int(min_val_rows)
     hyc = pinn_raw.get("hypercube_sampling", {})
     samp = contract["training_parameterization"]["sampling"]
+    n_skt = int(samp["n_skt"]) if n_skt is None else n_skt
+    val_param_frac = (float(samp["val_param_frac"]) if val_param_frac is None
+                      else val_param_frac)
+    mc_subset_frac = (float(contract["oracle"]["three_way_validation"]["mc_coverage_frac"])
+                      if mc_subset_frac is None else mc_subset_frac)
+    assert 0.0 < val_param_frac < 1.0, val_param_frac
     ranges = {k: tuple(map(float, samp["ranges"][k])) for k in HESTON_PARAM_NAMES}
     anchors = anchors_from_contract(contract_path) if "regimes" in contract else None
     # ONE global sample (identical to a single full generate_labels call at this
@@ -335,7 +344,7 @@ def _write_part(npz_path: Path, json_path: Path, arrays: dict, ident: dict) -> N
 
 
 def generate_anchor_grids(contract_path: str, out_dir: str, seed: int, *,
-                          mc_subset_frac: float = 0.10, resume: bool = True,
+                          mc_subset_frac: float | None = None, resume: bool = True,
                           mc_paths: int = 200_000, near_feller_mc_multiplier: int = 4,
                           leg_kwargs: dict[str, dict] | None = None,
                           grid_override: dict | None = None) -> dict:
@@ -344,12 +353,18 @@ def generate_anchor_grids(contract_path: str, out_dir: str, seed: int, *,
 
     grid_override (smoke tests only; recorded in the manifest) updates the
     contract's per-axis grid spec, e.g. {"S": {"n": 4}}. Production runs the
-    contract grid unchanged.
+    contract grid unchanged. mc_subset_frac left None (production) is read from
+    oracle.three_way_validation.mc_coverage_frac (same contract value that
+    governs generate_train_val's MC coverage, applied here to grid ROWS per tau
+    slice rather than parameter points); explicit arguments (smoke tests) still
+    override.
     """
     out = _assert_not_frozen(out_dir)
     t0 = time.perf_counter()
     contract_sha = _sha256_file(contract_path)
     contract = yaml.safe_load(open(contract_path))
+    mc_subset_frac = (float(contract["oracle"]["three_way_validation"]["mc_coverage_frac"])
+                      if mc_subset_frac is None else mc_subset_frac)
     gc = {ax: dict(contract["grid"][ax]) for ax in ("S", "K", "tau")}
     for ax, upd in (grid_override or {}).items():
         gc[ax].update(upd)
@@ -572,15 +587,19 @@ if __name__ == "__main__":
     tv.add_argument("--out-dir", required=True, help="must not contain 'frozen'")
     tv.add_argument("--seed", type=int, default=42)
     tv.add_argument("--n-param-points", type=int, default=448)
-    tv.add_argument("--n-skt", type=int, default=64)
-    tv.add_argument("--mc-subset-frac", type=float, default=0.10)
-    tv.add_argument("--val-param-frac", type=float, default=0.20)
+    tv.add_argument("--n-skt", type=int, default=None,
+                    help="default: contract training_parameterization.sampling.n_skt")
+    tv.add_argument("--mc-subset-frac", type=float, default=None,
+                    help="default: contract oracle.three_way_validation.mc_coverage_frac")
+    tv.add_argument("--val-param-frac", type=float, default=None,
+                    help="default: contract training_parameterization.sampling.val_param_frac")
     tv.add_argument("--no-resume", action="store_true")
     an = sub.add_parser("anchors", help="TASK B: evaluation-anchor grids")
     an.add_argument("--contract", default="heston_benchmark_v6.yaml")
     an.add_argument("--out-dir", required=True, help="must not contain 'frozen'")
     an.add_argument("--seed", type=int, default=42)
-    an.add_argument("--mc-subset-frac", type=float, default=0.10)
+    an.add_argument("--mc-subset-frac", type=float, default=None,
+                    help="default: contract oracle.three_way_validation.mc_coverage_frac")
     an.add_argument("--mc-paths", type=int, default=200_000)
     an.add_argument("--no-resume", action="store_true")
     args = ap.parse_args()

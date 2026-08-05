@@ -72,7 +72,8 @@ def _assert_not_frozen(out_dir: str) -> Path:
 
 
 def generate_labels(contract_path: str, pinn_cfg_path: str, n_points: int, seed: int,
-                    out_dir: str, *, n_skt: int = 16, mc_subset_frac: float = 0.1,
+                    out_dir: str, *, n_skt: int | None = None,
+                    mc_subset_frac: float | None = None,
                     leg_kwargs: dict[str, dict] | None = None,
                     params: np.ndarray | None = None,
                     skt: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
@@ -93,12 +94,16 @@ def generate_labels(contract_path: str, pinn_cfg_path: str, n_points: int, seed:
         and per-point MC leg seeds all derive from it deterministically.
     out_dir : str
         Destination directory; must NOT contain 'frozen' (asserted).
-    n_skt : int
+    n_skt : int | None
         (S, K, tau) triples drawn uniformly inside the contract grid ranges,
         SHARED across parameter points (rectangular arrays, CRN-style comparisons).
-    mc_subset_frac : float
+        None (default) reads training_parameterization.sampling.n_skt from the
+        contract; explicit values (e.g. smoke tests) override.
+    mc_subset_frac : float | None
         Fraction of parameter points (ceil, at least 1) that additionally run the
-        MC leg; declared in the manifest. CF + FD run everywhere.
+        MC leg; declared in the manifest. CF + FD run everywhere. None (default)
+        reads oracle.three_way_validation.mc_coverage_frac from the contract;
+        explicit values (e.g. smoke tests) override.
     leg_kwargs : dict[str, dict] | None
         Per-leg keyword overrides, keys in {"cf", "fd", "mc", "adi"} — smoke tests
         pass tiny grids/path counts here; production uses oracle.py defaults.
@@ -124,6 +129,9 @@ def generate_labels(contract_path: str, pinn_cfg_path: str, n_points: int, seed:
 
     params_given = params is not None
     samp = contract["training_parameterization"]["sampling"]
+    n_skt = int(samp["n_skt"]) if n_skt is None else n_skt
+    mc_subset_frac = (float(contract["oracle"]["three_way_validation"]["mc_coverage_frac"])
+                      if mc_subset_frac is None else mc_subset_frac)
     ranges = {k: tuple(map(float, samp["ranges"][k])) for k in HESTON_PARAM_NAMES}
     if params_given:
         params = np.ascontiguousarray(np.asarray(params, dtype=float))
@@ -365,10 +373,12 @@ if __name__ == "__main__":
     ap.add_argument("--contract", default="heston_benchmark_v6.yaml")
     ap.add_argument("--pinn-cfg", default="pinn_config.yaml")
     ap.add_argument("--n-points", type=int, required=True)
-    ap.add_argument("--n-skt", type=int, default=16)
+    ap.add_argument("--n-skt", type=int, default=None,
+                    help="default: contract training_parameterization.sampling.n_skt")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out-dir", required=True, help="must not contain 'frozen'")
-    ap.add_argument("--mc-subset-frac", type=float, default=0.1)
+    ap.add_argument("--mc-subset-frac", type=float, default=None,
+                    help="default: contract oracle.three_way_validation.mc_coverage_frac")
     args = ap.parse_args()
     res = generate_labels(args.contract, args.pinn_cfg, args.n_points, args.seed,
                           args.out_dir, n_skt=args.n_skt,
