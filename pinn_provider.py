@@ -39,13 +39,22 @@ from ude import build_model
 _FROZEN_PARAMS = ("kappa", "theta", "xi", "rho")
 
 # engine method name -> checkpoint arm directory (identity for names not listed:
-# feedforward, sigma_*, shuffled, bs_gamma, gradient_penalty_only, info_matched_baseline)
+# feedforward, sigma_010/025/050, shuffled, bs_gamma, gradient_penalty_only,
+# info_matched_baseline)
 _ARM_DIR = {
     "standard_pinn": "standard_pinn",
     "rung1": "rung1_delta",
     "rung2": "rung2_delta_gamma",
     "rung3": "rung3_delta_gamma_vega",
     "sans_pde": "sobolev_sans_pde",
+    # sigma_000 is the ZERO-DOSE point of the A6 gamma-label-noise ladder, and at
+    # sigma=0 it IS rung3: pinn_config declares `sigma_000: *rung3`, so the two
+    # PINNConfigs are identical and the same seed yields the same checkpoint.
+    # infra/modal_app.GRID_ARMS therefore does not re-train it ("sigma_000 ==
+    # rung3, not re-trained"); without this alias run_full_sweep would look for a
+    # sigma_000/ directory that no dispatch ever writes. The engine still reports
+    # it under its own method name, so the dose-response keeps a distinct row.
+    "sigma_000": "rung3_delta_gamma_vega",
 }
 
 # mode-dependent / stochastic modules that would break eval reproducibility

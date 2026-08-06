@@ -29,7 +29,15 @@ from pathlib import Path
 # arms), everything else at the default 5. Seeds are global_seed + 0..(n-1)
 # (contract meta.global_seed / seeds_confirmatory_cell / thresholds.seeds.default).
 # ---------------------------------------------------------------------------
-HIGH_SEED_ARMS = ("rung0_price_only", "standard_pinn", "rung3_delta_gamma_vega")
+# Arms that need the confirmatory-cell seed count (10). This must COVER every arm
+# run_hedging.run_confirmatory hedges at that cell — standard_pinn, rung1, rung2,
+# rung3 (pinn_provider._ARM_DIR maps those engine names to these directories) —
+# or the confirmatory run dies on a missing checkpoint AFTER the GPU spend. The
+# order-attribution verdict (rung2 vs rung1) lives on exactly that cell, so
+# rung1_delta / rung2_delta_gamma are 10-seed arms, not default-seed arms.
+# test_modal_app::test_grid_covers_the_hedging_runners is the drift guard.
+HIGH_SEED_ARMS = ("rung0_price_only", "standard_pinn", "rung1_delta",
+                  "rung2_delta_gamma", "rung3_delta_gamma_vega")
 GRID_ARMS = (
     # supervision ladder (A1)
     "rung0_price_only", "rung1_delta", "rung2_delta_gamma", "rung3_delta_gamma_vega",
@@ -198,6 +206,38 @@ def _launch(grid: list[tuple[str, int]], data_ref: str, lambdas_ref: str,
 # driver + CLI
 # ---------------------------------------------------------------------------
 
+def _preflight_inputs(data_ref: str, lambdas_ref: str) -> None:
+    """Fail BEFORE spending GPU if an input the remote run needs is absent.
+
+    data_ref / lambdas_ref are paths inside the remote /repo, and the image is
+    built from THIS repo (add_local_dir), so what is missing here is missing
+    there. Both failure modes are expensive and one of them is silent:
+
+      * missing data      -> every run exits non-zero; the whole grid is billed
+                             and returns nothing.
+      * missing lambdas   -> train.py only WARNS and falls back to the
+                             pinn_config defaults, so every run reports
+                             status 'ok' while carrying the wrong swept lambdas.
+                             Nothing downstream can tell those checkpoints from
+                             correctly-weighted ones.
+
+    Dry runs skip this on purpose: costing a grid before the artifacts are
+    frozen is a normal thing to do.
+    """
+    repo = Path(__file__).resolve().parent.parent
+    missing = [(label, ref) for label, ref in
+               (("--data", data_ref), ("--lambdas", lambdas_ref))
+               if not (Path(ref) if Path(ref).is_absolute() else repo / ref).exists()]
+    if missing:
+        raise FileNotFoundError(
+            "refusing to launch: " +
+            "; ".join(f"{label} {ref!r} does not exist under {repo}"
+                      for label, ref in missing) +
+            ". Freeze the label artifact and run `train.py --select-lambdas` "
+            "first — a missing --lambdas does NOT fail the remote run, it "
+            "silently trains on pinn_config defaults.")
+
+
 def dispatch_grid(grid: list[tuple[str, int]] | None = None, *, launch: bool = False,
                   data_ref: str = _DEFAULT_DATA, lambdas_ref: str = _DEFAULT_LAMBDAS,
                   out_root: str = _DEFAULT_OUT,
@@ -206,8 +246,9 @@ def dispatch_grid(grid: list[tuple[str, int]] | None = None, *, launch: bool = F
     """Map the grid over train_remote. DRY-RUN unless launch=True.
 
     Dry run prints the plan + GPU-hr x rate estimate and returns without ever
-    importing modal; launch=True dispatches, retries failures once, and pulls
-    best.pt + runlog.json back to out_root/<arm>/s<seed>/.
+    importing modal; launch=True preflights the inputs (see _preflight_inputs),
+    dispatches, retries failures once, and pulls best.pt + runlog.json back to
+    out_root/<arm>/s<seed>/.
     """
     grid = build_grid() if grid is None else list(grid)
     cost = estimate_cost(grid, minutes_per_run, usd_per_hr)
@@ -216,6 +257,7 @@ def dispatch_grid(grid: list[tuple[str, int]] | None = None, *, launch: bool = F
         print("[dispatch_grid] dry run only; pass --launch to spend GPU "
               "(money = human approval per CLAUDE.md)")
         return {"launched": False, "grid": grid, "cost": cost}
+    _preflight_inputs(data_ref, lambdas_ref)
     return _launch(grid, data_ref, lambdas_ref, out_root, cost)
 
 
