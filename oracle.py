@@ -666,15 +666,36 @@ def _nonuniform_weights(g: np.ndarray):
 
 
 def heston_greeks_adi(S, K, tau, p: HestonParams, r: float, q: float,
-                      nx: int = 901, nv: int = 241, xmax: float = 4.0,
-                      vmax: float = 0.8, steps_per_year: int = 1000,
+                      nx: int = 901, nv: int = 481, xmax: float = 4.0,
+                      vmax: float = 1.6, steps_per_year: int = 1000,
                       cx: float = 0.05) -> GreekSet:
-    """Leg D (near_feller only): Craig-Sneyd ADI solve of the Heston PDE in
+    """Leg D (fourth leg): Craig-Sneyd ADI solve of the Heston PDE in
     (x, v), x = S/K (call homogeneity: one solve serves all S, K; tau read off
     as snapshots). Sinh-stretched x grid clustered at the strike and v grid
     dense near v = 0; Rannacher damped half-step start; cell-averaged payoff at
     the kink. Greeks by grid differencing (vanna = D1_v of the delta slice);
-    theta from the PDE operator; d_xi/d_rho: NaN."""
+    theta from the PDE operator; d_xi/d_rho: NaN.
+
+    vmax=1.6 is LOAD-BEARING, not a comfort margin. At the previous default
+    (vmax=0.8) the variance domain is truncated inside the mass of the xi=0.60
+    regime, and the artificial boundary contaminates the v-direction derivatives:
+    on feller_violating_volvol (Feller 0.444) the vega disagreement with the CF
+    leg was SYSTEMATIC (adi > cf on 87.9% of grid points) and grew monotonically
+    with tau (0.0 at tau=0.04 to 0.0087 at tau=1.0, the boundary error
+    propagating inward), masking 59.4% of that regime's vega grid at the
+    contract's agreement_tol_rel=1e-3.
+
+    It is domain truncation, not resolution: refining time (1000 -> 4000
+    steps/yr) left the gap identical to 6 decimal places, and refining nv
+    (241 -> 481) left vega unchanged while gamma improved. Doubling the DOMAIN at
+    an unchanged nv=241 -- i.e. a coarser grid near v=0 -- collapsed the vega
+    mask from 0.5942 to 0.0033. Gamma, a pure x-derivative orthogonal to the bad
+    boundary, was clean throughout. 1.6 -> 3.2 buys ~nothing (median 4.0e-05 ->
+    2.8e-05), so 1.6 is converged; nv=481 matches the setting the frozen label
+    artifacts were generated with. Regimes with a tight variance density
+    (near_feller, xi=0.34) are unaffected either way -- their mask rates do not
+    move under this sweep, which is what localizes the effect to broad-xi
+    regimes. Do not lower vmax back to 0.8."""
     S, K, tau = np.broadcast_arrays(np.asarray(S, float), np.asarray(K, float),
                                     np.asarray(tau, float))
     shape = S.shape

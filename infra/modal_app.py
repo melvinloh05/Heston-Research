@@ -60,7 +60,7 @@ MODAL_L40S_USD_PER_HR = 1.95     # Modal on-demand L40S list price; override --r
 EST_MINUTES_PER_RUN = 25.0       # wall-clock budget for one matched-epochs fit; --minutes
 TIMEOUT_S = 2 * 60 * 60          # per-run hard cap on the remote function
 
-_DEFAULT_DATA = "data/frozen/train_val_labels.npz"
+_DEFAULT_DATA = "data/frozen/v6-labels-20260812/train_val/train_val_labels.npz"
 _DEFAULT_LAMBDAS = "lambdas_selected.yaml"
 _DEFAULT_OUT = "results/grid"
 
