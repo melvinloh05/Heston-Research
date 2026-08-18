@@ -1,0 +1,31 @@
+==========================================================================
+(1) rebalance grid vs contract dt
+==========================================================================
+  contract hedging_simulation.rebalancing.dt = 0.003968
+  contract horizon.T_prime                   = 0.17
+  engine  rebalancing.frequency_per_year     = 252   (1/252 = 0.003968254)
+  T_prime * freq                             = 42.84   (not an integer)
+  n_steps = round(...)                       = 43
+  realized dt = T_prime / n_steps            = 0.003953488
+  contract dt                                = 0.003968000
+  relative difference                        = 0.3657%
+  n_steps implied by contract dt             = 42.8427
+  => realized rebalances per year            = 252.9412
+
+==========================================================================
+(2)+(3) CRN / stream alignment
+==========================================================================
+  same seed re-simulated bit-identical : S True  v True
+  Bates lambda_j=0 recovers Heston     : S True  v True
+  combined m=1 -> xi=0.44999999999999996, rho=-0.8 (contract targets 0.45 / -0.80)
+  perturbed cell differs from base     : True
+  QE exponential-branch atom: exact v==0 states in base cell = 0 / 22000
+
+==========================================================================
+(4) positions are tc-invariant (premise of the t_ex column)
+==========================================================================
+  positions identical across tiers : True
+  t_ex source _total_traded equal   : True
+    tc=0.0   mean pnl=-2.449522  cvar95=+4.406221  decomposition ok=True
+    tc=0.01  mean pnl=-5.381482  cvar95=+8.299962  decomposition ok=True
+    tc=0.02  mean pnl=-8.313441  cvar95=+12.312231  decomposition ok=True

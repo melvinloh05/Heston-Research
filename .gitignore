@@ -36,3 +36,9 @@ mlruns/
 .DS_Store
 .idea/
 .vscode/
+# local editor state
+.claude/settings.local.json
+
+# superseded / scratch (kept locally, not published)
+claim_memo_v7 copy.md
+layout.md

@@ -1,0 +1,4 @@
+engine   rows: 24   in-process repeat identical: True
+analysis      : pooled diff=-0.4  in-process repeat identical: True
+ENGINE_DIGEST=a96c33519d10e1374f5ac7f5d55587ef4529bc0455ede378166db15ca48159e3
+ANALYSIS_DIGEST=2d3a31aff3f932cd08e492f0be63709fbf182124dee40320c46c5e4704caded7

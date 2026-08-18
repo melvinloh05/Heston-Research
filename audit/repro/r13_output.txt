@@ -1,0 +1,76 @@
+probe: 148 production parameter points (20 band = ALL production band points, 10 in the MC subset); production band weight 0.0446
+generate_labels wall clock 529s
+
+--- (1) per-point mask rate vs Feller ratio ---
+  Spearman rho(feller, point mask rate) = -0.3346  (p=3.23e-05, n=148 points)
+  feller [0.40, 0.6): n=  20  mask rate 0.5227
+  feller [0.60, 1.0): n=  20  mask rate 0.0602
+  feller [1.00, 2.0): n=  41  mask rate 0.0755
+  feller [2.00, 4.0): n=  46  mask rate 0.0645
+  feller [4.00, inf): n=  21  mask rate 0.0632
+
+--- (2) masked vs surviving ROW distributions ---
+                quantity               masked q25/q50/q75            surviving q25/q50/q75
+            feller ratio     0.4903     0.5889     1.7556       1.0891     1.9659     3.0610
+           moneyness S/K     0.5657     0.7015     1.0044       0.7885     1.0969     1.2344
+                     tau     0.0928     0.2172     0.6767       0.3097     0.6274     0.8681
+       |consensus_price|  3.782e-12  0.0006331      9.228        0.384      11.57      24.99
+       |consensus_delta|  2.531e-11  0.0002227     0.6448      0.07354      0.739       0.94
+       |consensus_gamma|    4.2e-11  4.797e-06   0.002309     0.001326   0.007652     0.0138
+        |consensus_vega|  3.121e-09  0.0009765       6.47        2.083      9.662      21.08
+       |consensus_vanna|  8.049e-09  0.0006163     0.3042       0.1471     0.3619     0.7784
+
+--- (3) mask rate by |consensus| decile ---
+   gamma: 1:0.655 2:0.120 3:0.122 4:0.078 5:0.076 6:0.042 7:0.036 8:0.030 9:0.035 10:0.092
+    vega: 1:0.656 2:0.119 3:0.091 4:0.058 5:0.071 6:0.035 7:0.032 8:0.022 9:0.058 10:0.145
+
+--- (4) the contract's own neutrality report on this probe ---
+# Mask neutrality report
+
+Artifact: `/private/tmp/claude-501/-Users-melvin-Documents-Heston-Research/9ba98a63-a6d2-4b73-98ac-b7a62d753c0f/scratchpad/r13/probe/labels.npz` — 148 parameter points x 64 (S, K, tau).
+Overall mask rate 0.129; per Greek: price 0.013, delta 0.065, gamma 0.060, vega 0.099, vanna 0.103.
+
+Statistics only — the contract's neutrality checks are judged by a
+human; nothing here auto-passes or auto-fails.
+
+## (a) Mask rate by Feller-ratio band
+
+| band | n_points | mask rate |
+|---|---|---|
+| [0.40, 0.6) | 20 | 0.523 |
+| [0.60, 1.0) | 20 | 0.060 |
+| [1.00, 2.0) | 41 | 0.075 |
+| [2.00, 4.0) | 46 | 0.065 |
+| [4.00, inf) | 21 | 0.063 |
+
+Flag for review if masking concentrates in the low-Feller bands
+(where a baseline PINN would also fail).
+
+## (b) Retained-point marginals (KS distance, masked vs retained)
+
+| dimension | KS statistic |
+|---|---|
+| kappa | 0.287 |
+| theta | 0.276 |
+| xi | 0.295 |
+| rho | 0.112 |
+| v0 | 0.175 |
+
+## (c) Mask rate by |gamma| decile
+
+| decile | max abs(gamma) | mask rate |
+|---|---|---|
+| 1 | 1.06e-05 | 0.655 |
+| 2 | 0.0003344 | 0.120 |
+| 3 | 0.001254 | 0.122 |
+| 4 | 0.002645 | 0.078 |
+| 5 | 0.006696 | 0.076 |
+| 6 | 0.008801 | 0.042 |
+| 7 | 0.01076 | 0.036 |
+| 8 | 0.01538 | 0.030 |
+| 9 | 0.02196 | 0.035 |
+| 10 | 0.05837 | 0.092 |
+
+Rate rising with |gamma| would indicate preferential retention of
+smooth-agrees-with-smooth points (check c).
+

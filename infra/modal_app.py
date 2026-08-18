@@ -36,13 +36,21 @@ from pathlib import Path
 # order-attribution verdict (rung2 vs rung1) lives on exactly that cell, so
 # rung1_delta / rung2_delta_gamma are 10-seed arms, not default-seed arms.
 # test_modal_app::test_grid_covers_the_hedging_runners is the drift guard.
-HIGH_SEED_ARMS = ("rung0_price_only", "standard_pinn", "rung1_delta",
+HIGH_SEED_ARMS = ("standard_pinn", "rung1_delta",
                   "rung2_delta_gamma", "rung3_delta_gamma_vega")
 GRID_ARMS = (
-    # supervision ladder (A1)
-    "rung0_price_only", "rung1_delta", "rung2_delta_gamma", "rung3_delta_gamma_vega",
-    # price-only / matched-info controls
-    "standard_pinn", "info_matched_baseline",
+    # supervision ladder (A1). The PRICE rung is standard_pinn, not
+    # rung0_price_only: load_arm gives the two BIT-IDENTICAL PINNConfigs
+    # (pinn_config declares both as `{}`), so at a shared seed they train to the
+    # same weights, and every runner + exhibits.LADDER_DEFAULT already reads the
+    # price rung as standard_pinn. Dispatching rung0_price_only as well bought 10
+    # GPU runs of a duplicate that no runner ever hedged. D1b.
+    "rung1_delta", "rung2_delta_gamma", "rung3_delta_gamma_vega",
+    # price-only / matched-info controls. feedforward is the factorial's
+    # supervision-OFF x PDE-OFF cell (baseline 0, use_pde=false + use_bc=false);
+    # without it the residual main effect at supervision-OFF and the interaction
+    # term are unidentified and no draft may say "complete factorial". D1.
+    "standard_pinn", "info_matched_baseline", "feedforward",
     # residual x supervision factorial off-cell + gradient-penalty arm
     "sobolev_sans_pde", "gradient_penalty_only",
     # A6 gamma-label-noise dose-response (sigma_000 == rung3, not re-trained)

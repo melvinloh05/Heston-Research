@@ -1,0 +1,64 @@
+==============================================================================
+PART 1 — does the module read a config file?
+==============================================================================
+module                    reads contract  reads engine yaml  yaml import
+oracle.py                           True              False        False
+greek_labels.py                    False              False        False
+make_labels.py                      True               True         True
+make_datasets.py                    True               True         True
+SobolevPINN.py                      True               True         True
+ude.py                             False              False        False
+train_pinn.py                      False               True         True
+train.py                            True               True         True
+Hedging_backtest.py                 True               True         True
+providers.py                       False               True        False
+pinn_provider.py                    True              False        False
+run_hedging.py                      True               True         True
+run_info_matching.py                True               True         True
+gate_headroom.py                   False              False        False
+eval_greeks.py                      True              False         True
+analyze_results.py                 False               True        False
+exhibits.py                        False              False        False
+
+==============================================================================
+PART 2 — contract quantities re-typed as Python literals
+==============================================================================
+site                       quantity                               code           contract  status
+analyze_results.py:53      cvar level                             0.95               0.95  duplicate (equal)
+analyze_results.py:54      bootstrap B                            2000               2000  duplicate (equal)
+analyze_results.py:55      global seed                              42                 42  duplicate (equal)
+analyze_results.py:50      confirmatory magnitude                  1.0                1.0  duplicate (equal)
+analyze_results.py:304     confirm rel thresh                      0.1                0.1  duplicate (equal)
+analyze_results.py:301     confirmatory tc                        0.01               0.01  duplicate (equal)
+analyze_results.py:556     ood gamma reduction                    0.15               0.15  duplicate (equal)
+analyze_results.py:556     ood vega reduction                     0.15               0.15  duplicate (equal)
+analyze_results.py:556     price parity tol                        0.1                0.1  duplicate (equal)
+analyze_results.py:718     tc tiers                  (0.0, 0.01, 0.02)  (0.0, 0.01, 0.02)  duplicate (equal)
+gate_headroom.py:361       gate spread thresh                      0.1                0.1  duplicate (equal)
+eval_greeks.py:288         ood gamma reduction                    0.15               0.15  duplicate (equal)
+eval_greeks.py:288         ood vega reduction                     0.15               0.15  duplicate (equal)
+eval_greeks.py:289         price parity tol                        0.1                0.1  duplicate (equal)
+exhibits.py                vanna threshold line                   0.15               0.15  duplicate (equal)
+train_pinn.py:188          info-match cap                            5                  5  duplicate (equal)
+train_pinn.py:341          feller_min fallback                     0.4                0.4  duplicate (equal)
+train_pinn.py:342          excision radius fallback                0.1                0.1  duplicate (equal)
+train_pinn.py:288          80/20 split fallback                    0.2                0.2  duplicate (equal)
+run_info_matching.py:62    PLATEAU_TOL                            0.02               None  NO CONTRACT VALUE
+analyze_results.py:622     sakuma rel_tol                         0.02               None  NO CONTRACT VALUE
+analyze_results.py:450     spearman p_max                         0.05               None  NO CONTRACT VALUE
+eval_greeks.py:45          wing bounds                     (0.75, 1.3)               None  NO CONTRACT VALUE
+Hedging_backtest.py:49     QE gamma1/gamma2                 (0.5, 0.5)               None  NO CONTRACT VALUE
+
+  duplicated-but-equal : 19
+  MISMATCHED           : 0
+  no contract value    : 5
+
+==============================================================================
+PART 3 — engine-derived quantities that ARE read from the contract (control group)
+==============================================================================
+  tc tiers          <- bm.hedging_simulation.transaction_costs.tiers = [0.0, 0.01, 0.02]
+  seeds             <- meta.global_seed + 0..seeds_min-1            = [42, 43, 44, 45, 46]
+  instrument        <- bm.hedging_simulation.instrument             = {'type': 'european_call', 'S0': 100.0, 'K': 100.0, 'tau0': 0.25}
+  train_params      <- bm.hedging_simulation.misspecification       = baseline
+  oracle/baseline   <- hedging_config provider names                = oracle / standard_pinn
+  cvar level        <- hedging_config risk.cvar_level               = 0.95

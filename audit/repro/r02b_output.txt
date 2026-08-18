@@ -1,0 +1,1 @@
+rung3 WORSE and worsening with TC, but trading less -> {'reading': 'channel_ii', 'present_i': False, 'present_ii': True, 'widening': True, 't_ex_reduced': True}

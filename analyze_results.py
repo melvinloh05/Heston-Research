@@ -425,11 +425,24 @@ def order_attribution(pnl_dir, *, thresholds: dict | None = None,
     res = paired_ci_from_npz(pnl_dir, arm, baseline, tc, level, n_boot, seed,
                              slug_filter=_MISSPEC_FILTER, thresholds=th)
     p = res["pooled"]
-    beats = _excludes_zero(p["ci_lo"], p["ci_hi"]) and p["ci_hi"] < 0.0
+    excludes = _excludes_zero(p["ci_lo"], p["ci_hi"])
+    beats = excludes and p["ci_hi"] < 0.0
     verdict = "pass" if beats else "fail"
-    note = "rung2 beats rung1, CI excludes 0" if beats else (
-        "honest null: rung1->rung2 (add-Gamma) CI includes 0 — no evidence the "
-        "Gamma rung improves delta-only hedging over delta supervision alone")
+    # THREE outcomes, not two. The old `else` branch asserted "CI includes 0" for
+    # every non-pass, which is FALSE when the CI excludes 0 on the HARMFUL side
+    # (diff = arm - baseline, so ci_lo > 0 means rung2 is significantly WORSE).
+    # That is a materially different finding from a null and must not be
+    # mislabelled: a null says "no evidence Gamma helps", this says "evidence
+    # Gamma hurts at this cell".
+    if beats:
+        note = "rung2 beats rung1, CI excludes 0"
+    elif excludes:                       # CI wholly above 0 -> significant REVERSAL
+        note = ("SIGNIFICANT REVERSAL, not a null: rung1->rung2 (add-Gamma) CI "
+                "EXCLUDES 0 on the harmful side — Gamma supervision significantly "
+                "WORSENS delta-only hedging versus delta supervision alone at this cell")
+    else:
+        note = ("honest null: rung1->rung2 (add-Gamma) CI includes 0 — no evidence the "
+                "Gamma rung improves delta-only hedging over delta supervision alone")
     notes = (f"{res['n_seeds']} seeds; pooled CVaR diff={p['diff']:.4g} "
              f"CI=[{p['ci_lo']:.4g}, {p['ci_hi']:.4g}]; rel={p['rel_improvement']:.4f}. "
              + note)

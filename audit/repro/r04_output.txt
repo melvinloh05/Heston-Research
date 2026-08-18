@@ -1,0 +1,74 @@
+==========================================================================
+(a) price-head state_dict bit-identical across arms at seed 42
+==========================================================================
+  rung0_price_only         price head == rung3 : True
+  rung1_delta              price head == rung3 : True
+  rung2_delta_gamma        price head == rung3 : True
+  rung3_delta_gamma_vega   price head == rung3 : True
+  standard_pinn            price head == rung3 : True
+  feedforward              price head == rung3 : True
+  sigma_000                price head == rung3 : True
+  sigma_010                price head == rung3 : True
+  sigma_050                price head == rung3 : True
+  shuffled                 price head == rung3 : True
+  bs_gamma                 price head == rung3 : True
+  gradient_penalty_only    price head == rung3 : True
+  sobolev_sans_pde         price head == rung3 : True
+  lambda_pde_zero          price head == rung3 : True
+  ude                      price head == rung3 : True
+
+==========================================================================
+(b) UDE: g_phi zero at init; residual bit-identical to the base arm
+==========================================================================
+  param_counts(ude)  = {'price_head': 13121, 'correction': 321, 'total': 13442}
+  param_counts(base) = {'price_head': 13121, 'correction': 0, 'total': 13121}
+  max |g_phi(v)| over v in [0, 0.2]  = 0.000e+00
+  residual bit-identical (ude vs base) : True
+  max abs diff                          : 0.000e+00
+
+==========================================================================
+(c) loss scales bit-identical across arms (full-split freeze)
+==========================================================================
+  reference (rung3) scales: bc=1, delta=0.348208, gamma=0.000856181, pde=0.012214, price=30.535, vanna=0.00331633, vega=8.34058
+  rung0_price_only         scales == rung3 : True
+  rung1_delta              scales == rung3 : True
+  rung2_delta_gamma        scales == rung3 : True
+  rung3_delta_gamma_vega   scales == rung3 : True
+  standard_pinn            scales == rung3 : True
+  feedforward              scales == rung3 : True
+  sigma_000                scales == rung3 : True
+  sigma_010                scales == rung3 : True
+  sigma_050                scales == rung3 : True
+  shuffled                 scales == rung3 : True
+  bs_gamma                 scales == rung3 : True
+  gradient_penalty_only    scales == rung3 : True
+  sobolev_sans_pde         scales == rung3 : True
+  lambda_pde_zero          scales == rung3 : True
+  ude                      scales == rung3 : True
+
+==========================================================================
+(d) OFF loss terms contribute exactly zero gradient
+==========================================================================
+  rung1_delta              terms = ['delta', 'pde', 'price']
+  rung2_delta_gamma        terms = ['delta', 'gamma', 'pde', 'price']
+  rung3_delta_gamma_vega   terms = ['delta', 'gamma', 'pde', 'price', 'vega']
+  standard_pinn            terms = ['pde', 'price']
+  sobolev_sans_pde         terms = ['delta', 'gamma', 'price', 'vega']
+  lambda_pde_zero          terms = ['delta', 'gamma', 'price', 'vega']
+
+==========================================================================
+(e) PINNProvider: chunked vs unchunked autodiff
+==========================================================================
+  cfg.second_order_microbatch = 2048
+  chunk=None  bit-equal to chunk=97: {'price': True, 'delta': True, 'gamma': True, 'vega': True}
+        max abs diff: price=0.000e+00, delta=0.000e+00, gamma=0.000e+00, vega=0.000e+00
+  chunk=2048  bit-equal to chunk=97: {'price': True, 'delta': True, 'gamma': True, 'vega': True}
+        max abs diff: price=0.000e+00, delta=0.000e+00, gamma=0.000e+00, vega=0.000e+00
+  chunk=512   bit-equal to chunk=97: {'price': True, 'delta': True, 'gamma': True, 'vega': True}
+        max abs diff: price=0.000e+00, delta=0.000e+00, gamma=0.000e+00, vega=0.000e+00
+  chunk=97    bit-equal to chunk=97: {'price': True, 'delta': True, 'gamma': True, 'vega': True}
+        max abs diff: price=0.000e+00, delta=0.000e+00, gamma=0.000e+00, vega=0.000e+00
+  gamma magnitude scale: max|gamma| = 5.931e-05
+
+  --- v_floor / v = 0 behaviour (QE atom) ---
+  evaluate at v=0 finite: {'price': True, 'delta': True, 'gamma': True, 'vega': True, 'vanna': True}

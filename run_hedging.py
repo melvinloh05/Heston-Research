@@ -46,6 +46,9 @@ _CONFIRMATORY_ARMS = ["standard_pinn", "rung1", "rung2", "rung3"]
 # fallback: checkpoint dir == arm name); the smoothed standard_pinn variant is
 # added by the engine itself.
 ALL_ARMS = ["standard_pinn", "rung1", "rung2", "rung3", "sans_pde",
+            # baseline 0 = the factorial's supervision-OFF x PDE-OFF cell; hedged
+            # so the 2x2 has all four corners on the primary metric (D1).
+            "feedforward",
             "gradient_penalty_only", "info_matched_baseline",
             "sigma_000", "sigma_010", "sigma_025", "sigma_050",
             "shuffled", "bs_gamma"]

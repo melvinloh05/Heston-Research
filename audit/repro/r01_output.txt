@@ -1,0 +1,20 @@
+analyze_results.py mentions 'heston_benchmark': False
+analyze_results.py mentions 'hedging_config'  : False
+analyze_results.py calls resolve_config       : False
+
+quantity                   analyze_results.py      contract/engine  match
+cvar level                               0.95                 0.95  OK
+bootstrap B                              2000                 2000  OK
+global seed                                42                   42  OK
+confirmatory rel thr                      0.1                  0.1  OK
+confirmatory tc tier                     0.01                 0.01  OK
+ood greek reduction                      0.15                 0.15  OK
+ood vega reduction                       0.15                 0.15  OK
+price parity tol                          0.1                  0.1  OK
+tc sweep tiers              (0.0, 0.01, 0.02)    (0.0, 0.01, 0.02)  OK
+ood regimes              ('near_feller', 'strong_neg_corr') ('near_feller', 'strong_neg_corr')  OK
+baseline arm name               standard_pinn        standard_pinn  OK
+
+--- thresholds with NO contract counterpart at all (invented in Python) ---
+sakuma_null_consistency rel_tol = 0.02 -> contract acceptance_thresholds.in_model_hedging = NOT_PASS_FAIL
+dose_response spearman_p_max   = 0.05 -> contract dose_response text = 'monotone (isotonic + rank correlation); flat = regularization null'

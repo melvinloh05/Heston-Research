@@ -1,0 +1,14 @@
+     near_feller / full : n_unmasked= 18174  identical_inputs=True  identical_n=True  models_differ=True  equals_~mask_any&restrict=True  -> OK
+      gamma rmse per model: standard_pinn/init0=0.02134, standard_pinn/init1=0.0213, rung3/init2=0.02136, rung3/init2 x50=3.16e+05
+     near_feller / wing : n_unmasked=  9636  identical_inputs=True  identical_n=True  models_differ=True  equals_~mask_any&restrict=True  -> OK
+      gamma rmse per model: standard_pinn/init0=0.0007023, standard_pinn/init1=0.0006997, rung3/init2=0.0006896, rung3/init2 x50=3.694e+05
+     near_feller / tau  : n_unmasked=  1196  identical_inputs=True  identical_n=True  models_differ=True  equals_~mask_any&restrict=True  -> OK
+      gamma rmse per model: standard_pinn/init0=0.01596, standard_pinn/init1=0.01593, rung3/init2=0.01592, rung3/init2 x50=2.679e+05
+ strong_neg_corr / full : n_unmasked= 20241  identical_inputs=True  identical_n=True  models_differ=True  equals_~mask_any&restrict=True  -> OK
+      gamma rmse per model: standard_pinn/init0=0.0177, standard_pinn/init1=0.01767, rung3/init2=0.01768, rung3/init2 x50=3.997e+05
+ strong_neg_corr / wing : n_unmasked= 10056  identical_inputs=True  identical_n=True  models_differ=True  equals_~mask_any&restrict=True  -> OK
+      gamma rmse per model: standard_pinn/init0=0.001259, standard_pinn/init1=0.001259, rung3/init2=0.001225, rung3/init2 x50=4.468e+05
+ strong_neg_corr / tau  : n_unmasked=  1353  identical_inputs=True  identical_n=True  models_differ=True  equals_~mask_any&restrict=True  -> OK
+      gamma rmse per model: standard_pinn/init0=0.014, standard_pinn/init1=0.01399, rung3/init2=0.01392, rung3/init2 x50=2.634e+05
+
+ARM-INDEPENDENCE: CONFIRMED

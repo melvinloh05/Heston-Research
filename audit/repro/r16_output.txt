@@ -1,0 +1,21 @@
+                  regime  adi   n_mc  mask|mc  n_nomc mask|no mc   ratio
+------------------------------------------------------------------------
+                baseline   no   2176   0.0813   19472     0.0416     2.0
+           high_variance   no   2176   0.0216   19472     0.0001   210.3
+ feller_violating_volvol  yes   2176   0.6953   19472     0.6863     1.0
+         strong_neg_corr   no   2176   0.0997   19472     0.0611     1.6   PRIMARY
+             near_feller  yes   2176   0.1811   19472     0.1582     1.1   PRIMARY
+
+Per-greek, on the two PRIMARY regimes:
+  near_feller (adi_leg=True):
+      price: mask|mc 0.0069   mask|no-mc 0.0000
+      delta: mask|mc 0.0473   mask|no-mc 0.0409
+      gamma: mask|mc 0.0974   mask|no-mc 0.0822
+       vega: mask|mc 0.0749   mask|no-mc 0.0572
+      vanna: mask|mc 0.1232   mask|no-mc 0.1255
+  strong_neg_corr (adi_leg=False):
+      price: mask|mc 0.0257   mask|no-mc 0.0000
+      delta: mask|mc 0.0198   mask|no-mc 0.0000
+      gamma: mask|mc 0.0501   mask|no-mc 0.0459
+       vega: mask|mc 0.0450   mask|no-mc 0.0334
+      vanna: mask|mc 0.0510   mask|no-mc 0.0517

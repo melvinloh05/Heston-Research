@@ -1,0 +1,59 @@
+
+==============================================================================
+(1) production parameter sample
+==============================================================================
+  sample_hypercube_params(n=448, seed=42) delivers EXACTLY 448 points
+  -> Feller rejection + anchor excision cost ZERO delivered points (the sampler resamples until n are accepted)
+  ADI-band points (feller in [0.40, 0.60]): 20 / 448 = 0.0446
+  shared (S, K, tau) grid: 64 triples, drawn once, shared by every parameter point -> rows per parameter point = n_skt = 64
+
+==============================================================================
+(2) generate_labels on a 40-point probe (production leg kwargs)
+==============================================================================
+  probe points 40; MC points 4; ADI-band points 4
+  running (CF + FD every point, MC 200k paths on the subset, ADI on band points) ...
+  done in 123.5 s -> /private/tmp/claude-501/-Users-melvin-Documents-Heston-Research/a061997a-c4c9-4e24-bd54-2a071ce55c32/scratchpad/r09_probe/labels.npz
+
+==============================================================================
+(3) measured mask rate
+==============================================================================
+  rows generated: 40 x 64 = 2560
+  mask_any rate      : 0.1059   -> retention 0.8941
+    mask_price        : 0.0051
+    mask_delta        : 0.0605
+    mask_gamma        : 0.0586
+    mask_vega         : 0.0801
+    mask_vanna        : 0.0875
+
+  by leg set (rows):
+    adi+cf+fd        n_points   4  rows   256  mask 0.3906  retention 0.6094
+    cf+fd            n_points  32  rows  2048  mask 0.0723  retention 0.9277
+    cf+fd+mc         n_points   4  rows   256  mask 0.0898  retention 0.9102
+
+==============================================================================
+(4) retention chain: generated -> mask -> split -> ArmDataset
+==============================================================================
+  generated rows                       : 2560
+  after oracle mask (~mask_any)        : 2289   (0.8941)
+  train split (split==0, 32 points) : 1811   (0.7074 of generated)
+  val   split (split==1, 8 points) : 478   (0.1867 of generated)
+
+  ArmDataset(..., 'train').n_rows      : 1811   (chain predicted 1811)
+  ArmDataset(..., 'val').n_rows        : 478   (chain predicted 478)
+  extra filters between build_arm_labels and ArmDataset: NONE
+
+==============================================================================
+(5) extrapolation
+==============================================================================
+  N = shared.n_price_points = 4096; need train >= 5N = 20480, val >= N = 4096
+  measured retention keep = 0.8941
+  n_skt=64: n_param_points >= max(447.4 [train], 357.9 [val]) = 448
+      +10% margin -> 493  (round up to a multiple of 32: 512)
+      +15% margin -> 516  (round up to a multiple of 32: 544)
+      +20% margin -> 538  (round up to a multiple of 32: 544)
+      +25% margin -> 560  (round up to a multiple of 32: 576)
+
+  default n_param_points=448 at this retention:
+    train rows ~ 20487 (need 20480) -> PASS
+
+summary -> /private/tmp/claude-501/-Users-melvin-Documents-Heston-Research/a061997a-c4c9-4e24-bd54-2a071ce55c32/scratchpad/r09_probe/r09_summary.json

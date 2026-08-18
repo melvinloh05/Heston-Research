@@ -1,0 +1,20 @@
+exhibit_e2 wrote: {'png': 'e2_mechanism.png', 'csv': 'e2_mechanism.csv'}
+
+--- E2 backing CSV, T_ex panel rows ---
+   method=rung3                    value='0.2'      err='0.01'
+   method=rung1                    value=''         err=''
+   method=standard_pinn            value='0.3'      err='0.01'
+   method=oracle                   value='0'        err='0.01'
+
+--- what the FIGURE draws for the same rows ---
+   method=rung3                    csv cell=0.2        -> bar height 0.2
+   method=rung1                    csv cell=''         -> bar height 0.0
+   method=standard_pinn            csv cell=0.3        -> bar height 0.3
+
+   rung1's bar is drawn at exactly 0.0 — visually identical to
+   'trades exactly like the oracle', which is the contract's
+   cost-channel falsifier. The CSV correctly says blank.
+
+--- the SAME function handles the 2x2 inset correctly (exhibits.py:444-455) ---
+   M = [[quad[(r,b)] if quad[(r,b)] is not None else float('nan') ...]]
+   ax_2x2.text(..., 'n/a' if not math.isfinite(v) else f'{v:.3g}')

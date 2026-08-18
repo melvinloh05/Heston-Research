@@ -1,0 +1,68 @@
+
+==============================================================================
+(0) production composition at n_param_points=448, seed=42 (EXACT)
+==============================================================================
+  cf+fd       384 points   weight 0.8571
+  cf+fd+mc     44 points   weight 0.0982
+  band         20 points   weight 0.0446
+  (band = feller ratio in [0.40, 0.60]; MC subset = ceil(0.10*448) = 45 points, rng [seed, 2])
+
+==============================================================================
+(1) per-category measurement (production leg kwargs, unchanged code path)
+==============================================================================
+
+  [cf+fd] 160 points, 10240 rows, 91 s
+    legs seen        : ['cf+fd']
+    mask rate        : 0.0685  +/- 0.0034 (SE clustered by parameter point)
+    retention        : 0.9315
+    per greek        : price 0.0000, delta 0.0549, gamma 0.0562, vega 0.0517, vanna 0.0591
+
+  [cf+fd+mc] 24 points, 1536 rows, 41 s
+    legs seen        : ['cf+fd+mc']
+    mask rate        : 0.0749  +/- 0.0076 (SE clustered by parameter point)
+    retention        : 0.9251
+    per greek        : price 0.0091, delta 0.0508, gamma 0.0573, vega 0.0573, vanna 0.0514
+
+  [band (ALL production band points)] 20 points, 1280 rows, 461 s
+    legs seen        : ['adi+cf+fd', 'adi+cf+fd+mc']
+    mask rate        : 0.5211  +/- 0.0522 (SE clustered by parameter point)
+    retention        : 0.4789
+    per greek        : price 0.0930, delta 0.1305, gamma 0.1023, vega 0.3945, vanna 0.3906
+
+==============================================================================
+(2) composed mask rate at the production mix
+==============================================================================
+  cf+fd      weight 0.8571 x mask 0.0685 = 0.05868
+  cf+fd+mc   weight 0.0982 x mask 0.0749 = 0.00735
+  band       weight 0.0446 x mask 0.5211 = 0.02326
+  composed mask rate  : 0.0893 +/- 0.0030
+  composed RETENTION  : 0.9107  (95% lower bound 0.9048)
+
+==============================================================================
+(3) sizing
+==============================================================================
+  N = 4096; need train >= 5N = 20480, val >= N = 4096; n_skt = 64; val_param_frac = 0.2
+
+  at the composed point estimate (keep = 0.9107)
+    binding constraint: TRAIN (train 439.2, val 351.4)
+    minimum n_param_points = 440
+      +10% ->  485  (multiple of 32:  512)
+      +15% ->  506  (multiple of 32:  512)
+      +20% ->  528  (multiple of 32:  544)
+      +25% ->  550  (multiple of 32:  576)
+      +30% ->  572  (multiple of 32:  576)
+
+  at the 95% lower retention bound (keep = 0.9048)
+    binding constraint: TRAIN (train 442.1, val 353.7)
+    minimum n_param_points = 443
+      +10% ->  488  (multiple of 32:  512)
+      +15% ->  510  (multiple of 32:  512)
+      +20% ->  532  (multiple of 32:  544)
+      +25% ->  554  (multiple of 32:  576)
+      +30% ->  576  (multiple of 32:  576)
+
+  default n_param_points = 448 at the composed retention:
+    train rows ~ 20866 (need 20480) -> PASS, margin +386 rows (+1.89%)
+    val   rows ~ 5246 (need 4096) -> PASS
+
+summary -> /private/tmp/claude-501/-Users-melvin-Documents-Heston-Research/a061997a-c4c9-4e24-bd54-2a071ce55c32/scratchpad/r09b/r09b_summary.json

@@ -1,0 +1,32 @@
+==========================================================================
+(1) budget ladder against a train split SMALLER than 5N
+==========================================================================
+
+  frozen train rows = 20480   (N = 4096, cap 5N = 20480)
+  rung -> rows actually trained on: {1: 4096, 2: 8192, 3: 12288, 4: 16384, 5: 20480}
+  rungs whose data is BIT-IDENTICAL to the rung below: none
+
+  frozen train rows = 12388   (N = 4096, cap 5N = 20480)
+  rung -> rows actually trained on: {1: 4096, 2: 8192, 3: 12288, 4: 12388, 5: 12388}
+  rungs whose data is BIT-IDENTICAL to the rung below: [5]
+
+  frozen train rows = 8199   (N = 4096, cap 5N = 20480)
+  rung -> rows actually trained on: {1: 4096, 2: 8192, 3: 8199, 4: 8199, 5: 8199}
+  rungs whose data is BIT-IDENTICAL to the rung below: [4, 5]
+
+==========================================================================
+(2) what plateau_multiplier makes of a cap-flattened curve
+==========================================================================
+  mean Gamma rel-RMSE by rung : [0.4, 0.3, 0.24, 0.24, 0.24]
+  PLATEAU_TOL                 : 0.02
+  plateau_multiplier ->  {'plateau_multiplier': 4, 'plateau_index': 3, 'plateau_reached': True, 'rel_improvement': [nan, 0.25000000000000006, 0.2, 0.0, 0.0]}
+
+  verdict: plateau_reached=True at m=4
+  ...but the m=3 -> m=4 'gain' of 0.0 is an identity, not a measurement:
+  the two rungs saw the same rows.
+
+  For contrast, a genuine information plateau at the same rung:
+  curve [0.4, 0.3, 0.24, 0.238, 0.237] -> {'plateau_multiplier': 4, 'plateau_index': 3, 'plateau_reached': True, 'rel_improvement': [nan, 0.25000000000000006, 0.2, 0.008333333333333342, 0.004201680672268912]}
+
+  The two verdicts are indistinguishable in the returned dict and in the
+  CSV's plateau columns; only the n_train_rows column separates them.

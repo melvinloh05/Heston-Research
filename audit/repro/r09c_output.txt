@@ -1,0 +1,47 @@
+======================================================================================
+candidate sizes at the production seed 42 (n_skt=64, val_param_frac=0.2)
+need TRAIN >= 5N = 20480 rows, VAL >= N = 4096 rows
+======================================================================================
+ n_pts  band  bnd_tr  keep_tr  train_rows    margin  val_rows   hours  verdict
+------------------------------------------------------------------------------
+   384    24      21   0.8999       17682   -13.7%      4500    0.22     FAIL
+   416    22      18   0.9065       19320    -5.7%      4828    0.22     FAIL
+   448    20      13   0.9145       20952    +2.3%      5158    0.21     PASS
+   480    28      21   0.9062       22271    +8.7%      5516    0.27     PASS
+   512    26      23   0.9055       23760   +16.0%      5990    0.26     PASS
+   544    28      21   0.9090       25308   +23.6%      6291    0.28     PASS
+   576    35      27   0.9045       26686   +30.3%      6617    0.33     PASS
+   608    36      31   0.9021       28058   +37.0%      7121    0.34     PASS
+   640    36      25   0.9088       29780   +45.4%      7306    0.35     PASS
+  band = ADI-band points total; bnd_tr = how many landed in the TRAIN split
+  (rng [seed, 21]); keep_tr = retention of the TRAIN split specifically.
+  hours = measured single-core wall clock on this machine (CF+FD 0.57 s/pt,
+  +MC 1.71 s/pt, +ADI 23.05 s/pt); chunked + resumable, so it can be split.
+
+======================================================================================
+band share across seeds at n_param_points = 448 and 512
+(the artifact is generated at ONE seed, but the margin should survive a reseed)
+======================================================================================
+  n=448: band share min 0.0379 / max 0.0670; keep min 0.9006; train rows min 20546 (need 20480) -> worst-case PASS
+  n=512: band share min 0.0391 / max 0.0645; keep min 0.9017; train rows min 23528 (need 20480) -> worst-case PASS
+
+======================================================================================
+sensitivity: train rows vs band share, at n = 448 / 512 / 544
+======================================================================================
+  w_band     keep        448        512        544
+   0.020   0.9218      21121       24189       25663 
+   0.045   0.9105      20862       23892       25349 
+   0.060   0.9037      20707       23714       25160 
+   0.080   0.8947      20499       23477       24909 
+   0.100   0.8857      20292*      23240       24657 
+   0.120   0.8766      20085*      23003       24405 
+   0.150   0.8631      19775*      22647       24028 
+  (* = below the 5N = 20480 requirement)
+
+======================================================================================
+disk footprint of train_val_labels.npz (uncompressed np.savez)
+======================================================================================
+  n= 448: rows   28672  consensus   1.15 MB  uncertainty   1.15 MB  masks  0.17 MB  TOTAL   2.49 MB
+  n= 512: rows   32768  consensus   1.31 MB  uncertainty   1.31 MB  masks  0.20 MB  TOTAL   2.85 MB
+  n= 544: rows   34816  consensus   1.39 MB  uncertainty   1.39 MB  masks  0.21 MB  TOTAL   3.02 MB
+  (float64 for consensus_/uncertainty_, bool for mask_; parts/ adds ~1x more before it can be deleted)

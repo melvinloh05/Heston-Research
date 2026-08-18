@@ -1,0 +1,37 @@
+==========================================================================
+(a) confirmatory_cell on 3 seeds vs the pre-registered 10
+==========================================================================
+
+seeds present = 3  [42, 43, 44]
+  verdict   : pass
+  statistic : 0.2938  (pooled rel improvement)
+  CI        : [-0.6, -0.6]
+  row keys  : ['cell', 'ci_hi', 'ci_lo', 'notes', 'statistic', 'threshold_id', 'verdict']
+  n_seeds appears only in notes: yes
+
+seeds present = 10  [42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
+  verdict   : pass
+  statistic : 0.2886  (pooled rel improvement)
+  CI        : [-0.6, -0.6]
+  row keys  : ['cell', 'ci_hi', 'ci_lo', 'notes', 'statistic', 'threshold_id', 'verdict']
+  n_seeds appears only in notes: yes
+
+-> the 3-seed run yields the SAME verdict string as the 10-seed run;
+   no field of the verdict record carries the seed count.
+
+==========================================================================
+(b) _mechanism_reading with the tc=0 gap in the WRONG direction
+==========================================================================
+gaps (rung3 - standard, loss units; POSITIVE = rung3 worse):
+   tc=0.0   diff=+0.420  CI=[+0.200, +0.650]
+   tc=0.01  diff=+0.300  CI=[+0.100, +0.500]
+   tc=0.02  diff=+0.250  CI=[+0.050, +0.450]
+T_ex diff CI covers 0 (turnover unmoved).
+
+_mechanism_reading -> {'reading': 'channel_i', 'present_i': True, 'present_ii': False, 'widening': False, 't_ex_reduced': False}
+
+the MIRRORED case (rung3 genuinely better at every tier):
+_mechanism_reading -> {'reading': 'channel_i', 'present_i': True, 'present_ii': False, 'widening': False, 't_ex_reduced': False}
+
+-> identical reading 'channel_i' for 'rung3 is robustly BETTER at 0% TC'
+   and 'rung3 is robustly WORSE at 0% TC'.

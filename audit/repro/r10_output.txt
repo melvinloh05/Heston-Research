@@ -1,0 +1,22 @@
+Anchor grids written. Promoting any artifact into data/frozen stays a HUMAN step.
+
+generate_anchor_grids wall clock: 423.9s
+
+PRIMARY regimes (splits.heldout_greek_and_hedging): ['near_feller', 'strong_neg_corr']
+legs on the FULL grid = cf + fd (+ adi where the 4th leg applies);
+the MC leg enters only on the stratified 10% subset rows.
+
+                  regime  feller  adi  n_grid  mask_any    price    delta    gamma     vega    vanna
+----------------------------------------------------------------------------------------------------
+                baseline    1.78   no   21648    0.0456   0.0002   0.0004   0.0415   0.0293   0.0342
+ feller_violating_volvol    0.44  yes   21648    0.6872   0.1464   0.1345   0.0110   0.5954   0.4292
+           high_variance    4.00   no   21648    0.0023   0.0006   0.0005   0.0014   0.0012   0.0000
+         strong_neg_corr    1.78   no   21648    0.0650   0.0026   0.0020   0.0463   0.0346   0.0516
+             near_feller    1.04  yes   21648    0.1605   0.0007   0.0415   0.0837   0.0589   0.1252
+
+PRIMARY-regime mask-rate contrast (the cross-regime comparability question):
+  near_feller: mask_any 0.1605 over 21648 points (18174 survive)
+  strong_neg_corr: mask_any 0.0650 over 21648 points (20241 survive)
+  ratio 2.5x
+
+artifacts: /private/tmp/claude-501/-Users-melvin-Documents-Heston-Research/9ba98a63-a6d2-4b73-98ac-b7a62d753c0f/scratchpad/anchors_v6
