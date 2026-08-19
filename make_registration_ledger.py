@@ -91,7 +91,22 @@ _DESIGN_ROWS: list[tuple[str, list[str], str]] = [
      ["hedging_simulation.confirmatory_cell"], "-"),
     ("Tail claims require paired bootstrap over CRN paths",
      ["acceptance_thresholds.tail_claim_requires"], "-"),
+    ("Robustness row: confirmatory contrast ALSO at the rung3-sourced lambda_pde",
+     ["lambda_selection.robustness_row.status",
+      "lambda_selection.lambda_pde.source_arm"], "Q3"),
 ]
+
+#: Design rows whose verdict is not simply "held". The robustness row was
+#: DISCHARGED late and its answer is not neutral: the sourcing choice is
+#: material to the headline, which is the outcome the contract's own wording
+#: ("or shown not to be") explicitly admitted as possible.
+_DESIGN_VERDICTS = {
+    "Robustness row: confirmatory contrast ALSO at the rung3-sourced lambda_pde":
+        ("discharged", "rung3-sourced lambda_pde = 0.0 vs registered 0.01. At 10 seeds "
+                       "the headline moves +31.50% -> +2.86% (tc=0) and reverses at 1%. "
+                       "The sourcing choice is MATERIAL, not immaterial. At lambda_pde=0 "
+                       "the arms are bit-identical to feedforward and sobolev_sans_pde."),
+}
 
 _MISSING = "**MISSING KEY**"
 
@@ -143,7 +158,9 @@ def build_rows(contract_path: str, verdicts_csv: str) -> list[dict]:
             "contract_keys": "; ".join(keys),
             "amendment": amend,
             "declared": _fmt_declared(cfg, keys),
-            "observed": "", "ci": "", "verdict": "held", "notes": "",
+            "observed": "", "ci": "",
+            "verdict": _DESIGN_VERDICTS.get(label, ("held", ""))[0],
+            "notes": _DESIGN_VERDICTS.get(label, ("held", ""))[1],
         })
 
     # Any verdict row without provenance must still surface — never drop a result.

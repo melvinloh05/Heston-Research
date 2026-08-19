@@ -1,0 +1,85 @@
+lambda_pde: 0.0
+lambda_gamma: 1.0
+lambda_vega: 1.0
+lambda_delta: 1.0
+sources:
+  lambda_pde: rung3_delta_gamma_vega
+  lambda_gamma: rung3_delta_gamma_vega
+  lambda_vega: rung3_delta_gamma_vega
+  lambda_delta: fixed_not_swept
+selection:
+  protocol: 'staged: 1-D lambda_pde on the source arm, then 2-D (lambda_gamma, lambda_vega)
+    at that fixed lambda_pde'
+  tune_on: validation_only
+  candidates:
+    lambda_pde:
+    - 0.0
+    - 0.01
+    - 0.1
+    - 1.0
+    lambda_gamma:
+    - 0.3
+    - 1.0
+    - 3.0
+    lambda_vega:
+    - 0.3
+    - 1.0
+    - 3.0
+  seed: 42
+  steps: 20000
+scores_table_pde:
+- lambda_pde: 0.0
+  score: 0.1756511658691977
+- lambda_pde: 0.01
+  score: 0.16956909745008486
+- lambda_pde: 0.1
+  score: 0.33321906674796264
+- lambda_pde: 1.0
+  score: 0.3723517979262346
+scores_table:
+- lambda_pde: 0.01
+  lambda_gamma: 0.3
+  lambda_vega: 0.3
+  score: 0.007158829080211608
+- lambda_pde: 0.01
+  lambda_gamma: 0.3
+  lambda_vega: 1.0
+  score: 0.006294423886846713
+- lambda_pde: 0.01
+  lambda_gamma: 0.3
+  lambda_vega: 3.0
+  score: 0.007800208311450077
+- lambda_pde: 0.01
+  lambda_gamma: 1.0
+  lambda_vega: 0.3
+  score: 0.00579822349803699
+- lambda_pde: 0.01
+  lambda_gamma: 1.0
+  lambda_vega: 1.0
+  score: 0.005655259477610546
+- lambda_pde: 0.01
+  lambda_gamma: 1.0
+  lambda_vega: 3.0
+  score: 0.006340286730965233
+- lambda_pde: 0.01
+  lambda_gamma: 3.0
+  lambda_vega: 0.3
+  score: 0.006591972489568176
+- lambda_pde: 0.01
+  lambda_gamma: 3.0
+  lambda_vega: 1.0
+  score: 0.005964740041133369
+- lambda_pde: 0.01
+  lambda_gamma: 3.0
+  lambda_vega: 3.0
+  score: 0.005769983088825658
+config_hash: 5156aa71d24d545326b6afce05314c6805509af94238213e660db126212fc006
+robustness_row:
+  purpose: "contract lambda_selection.robustness_row \u2014 the confirmatory contrast\
+    \ ADDITIONALLY reported at the rung3-sourced lambda_pde"
+  status: robustness_result_not_a_second_confirmatory_test
+  lambda_pde_registered: 0.01
+  lambda_pde_rung3_sourced: 0.0
+  caveat: at lambda_pde = 0 the PDE-RETAINING arm retains no PDE residual, so this
+    contrast compares two non-PDE models. It is the registered comparison, but it
+    is a DIFFERENT OBJECT from the headline and must be reported as such.

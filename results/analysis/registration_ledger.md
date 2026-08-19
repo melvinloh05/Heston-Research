@@ -27,4 +27,5 @@ Every pre-registered commitment, its contract provenance, and its outcome. Decla
 | Transaction-cost tiers | `tiers` = [0.0, 0.01, 0.02] | - | — | **held** |
 | Confirmatory cell definition | `confirmatory_cell` = {'perturbation': 'combined', 'tc_tier': 0.01, 'regime': 'baseline', 'contrast': 'rung3_vs_standard_pinn', 'seeds': 10} | - | — | **held** |
 | Tail claims require paired bootstrap over CRN paths | `tail_claim_requires` = paired_bootstrap_over_CRN_paths_with_seed_variance_separated | - | — | **held** |
+| Robustness row: confirmatory contrast ALSO at the rung3-sourced lambda_pde | `status` = robustness_result_not_a_second_confirmatory_test; `source_arm` = standard_pinn | Q3 | — | **discharged** |
 

@@ -316,6 +316,180 @@ def paired_ci_from_npz(cell_dir, arm_a: str, arm_b: str, tc,
             "pooled": _pooled_stratified(blocks, level, n_boot, seed)}
 
 
+
+# ---------------------------------------------------------------------------
+# convention audit — pooled vs seed-level, and the economic-relevance floor
+# ---------------------------------------------------------------------------
+#: Student-t 97.5% quantiles by dof, for the seed-level interval. A small table
+#: rather than a scipy import: the seed counts here are 5 and 10, and adding a
+#: dependency for two lookups is not worth it.
+_T975 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
+         8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 14: 2.145, 19: 2.093}
+
+
+def _t975(dof: int) -> float:
+    if dof <= 0:
+        return float("nan")
+    if dof in _T975:
+        return _T975[dof]
+    return 1.96 if dof > 19 else _T975[min(_T975, key=lambda k: abs(k - dof))]
+
+
+#: Contrasts whose reading the paper actually leans on. Each is
+#: (label, arm, baseline, in_model).
+_AUDIT_CONTRASTS = (
+    ("+delta  standard_pinn->rung1", "rung1", "standard_pinn", False),
+    ("+gamma  rung1->rung2", "rung2", "rung1", False),
+    ("+vega   rung2->rung3", "rung3", "rung2", False),
+    ("headline rung3 vs standard_pinn", "rung3", "standard_pinn", False),
+    ("sakuma  rung3 vs oracle (in-model)", "rung3", "oracle", True),
+)
+
+
+def convention_audit(pnl_dir, *, thresholds: dict | None = None,
+                     contrasts=_AUDIT_CONTRASTS, tcs=None,
+                     level: float | None = None, n_boot: int | None = None,
+                     seed: int | None = None) -> list[dict]:
+    """Report BOTH conventions for every load-bearing contrast, plus a
+    negligibility flag.
+
+    WHY THIS EXISTS. `paired_ci_from_npz` already returns `pooled` (the
+    registered confirmatory statistic: paired bootstrap over CRN paths, stratified
+    within seed blocks) and `per_seed` (the same statistic computed within each
+    seed). The contract asks for both -- `tail_claim_requires:
+    paired_bootstrap_over_CRN_paths_with_seed_variance_separated` -- but nothing
+    previously EMITTED them side by side, so a claim could rest on whichever
+    convention happened to favour it without that being visible. Four contrasts in
+    this study flip between the two, and they do NOT all flip the same way.
+
+    The two answer different questions and neither is a fallback for the other:
+      pooled     -- do these trained hedgers differ on this path population?
+                    Conditions on the realized training runs.
+      seed-level -- does the difference replicate across training runs?
+                    The seed is the unit of generalization.
+    A claim that a METHOD generalizes needs seed-robustness; a claim about these
+    fitted models on these paths needs only pooled significance.
+
+    ECONOMIC-RELEVANCE FLOOR. Pooled intervals over ~10^5 paths resolve
+    differences far below anything that matters (sans_pde beats rung3 by 0.2%
+    with a CI excluding zero). `economically_negligible` flags |rel| below
+    `acceptance_thresholds.sakuma_null_rel_tol`.
+
+    DISCLOSURE, deliberately in the code rather than only in prose: that constant
+    was pre-registered for ONE check (the in-model Sakuma consistency band), and
+    using it as a GENERAL negligibility floor EXTENDS it to a role the contract
+    did not explicitly authorize. It is reused rather than invented -- a weaker
+    move than choosing a fresh threshold after seeing results, but not a neutral
+    one, and it must be reported as an extension.
+    """
+    th = _default_thresholds() if thresholds is None else thresholds
+    floor = _pick(None, th, "sakuma_null_rel_tol")
+    tcs = tuple(th["tc_tiers"]) if tcs is None else tuple(tcs)
+    rows: list[dict] = []
+    for label, arm, base, in_model in contrasts:
+        filt = _INMODEL_FILTER if in_model else _MISSPEC_FILTER
+        for tc in tcs:
+            try:
+                res = paired_ci_from_npz(pnl_dir, arm, base, tc, level, n_boot,
+                                         seed, slug_filter=filt, thresholds=th)
+            except Exception as exc:
+                rows.append({"contrast": label, "cell": "in-model" if in_model else "misspec",
+                             "tc": tc, "n_seeds": "", "pooled_diff": float("nan"),
+                             "pooled_ci_lo": float("nan"), "pooled_ci_hi": float("nan"),
+                             "pooled_rel": float("nan"), "seed_diff_mean": float("nan"),
+                             "seed_ci_lo": float("nan"), "seed_ci_hi": float("nan"),
+                             "pooled_significant": "", "seed_robust": "",
+                             "economically_negligible": "",
+                             "reading": f"error: {type(exc).__name__}"})
+                continue
+            p = res["pooled"]
+            diffs = [r["diff"] for r in res["per_seed"]
+                     if _num(r.get("diff")) is not None and math.isfinite(r["diff"])]
+            n = len(diffs)
+            if n >= 2:
+                m = sum(diffs) / n
+                var = sum((d - m) ** 2 for d in diffs) / (n - 1)
+                sem = (var ** 0.5) / (n ** 0.5)
+                half = _t975(n - 1) * sem
+                s_lo, s_hi = m - half, m + half
+            else:
+                m = diffs[0] if diffs else float("nan")
+                s_lo = s_hi = float("nan")
+            pooled_sig = _excludes_zero(p["ci_lo"], p["ci_hi"])
+            seed_rob = (math.isfinite(s_lo) and math.isfinite(s_hi)
+                        and _excludes_zero(s_lo, s_hi))
+            rel = p.get("rel_improvement", float("nan"))
+            negligible = math.isfinite(rel) and abs(rel) < floor
+            if pooled_sig and seed_rob:
+                reading = "pooled-significant AND seed-robust"
+            elif pooled_sig:
+                reading = "pooled-significant ONLY (does not replicate across seeds)"
+            elif seed_rob:
+                reading = "seed-robust ONLY (pooled CI covers 0)"
+            else:
+                reading = "neither"
+            if negligible and (pooled_sig or seed_rob):
+                reading += "; ECONOMICALLY NEGLIGIBLE (|rel| < floor)"
+            rows.append({"contrast": label,
+                         "cell": "in-model" if in_model else "misspec", "tc": tc,
+                         "n_seeds": res["n_seeds"], "pooled_diff": p["diff"],
+                         "pooled_ci_lo": p["ci_lo"], "pooled_ci_hi": p["ci_hi"],
+                         "pooled_rel": rel, "seed_diff_mean": m,
+                         "seed_ci_lo": s_lo, "seed_ci_hi": s_hi,
+                         "pooled_significant": bool(pooled_sig),
+                         "seed_robust": bool(seed_rob),
+                         "economically_negligible": bool(negligible),
+                         "reading": reading})
+    return rows
+
+
+CONVENTION_COLS = ["contrast", "cell", "tc", "n_seeds", "pooled_diff", "pooled_ci_lo",
+                   "pooled_ci_hi", "pooled_rel", "seed_diff_mean", "seed_ci_lo",
+                   "seed_ci_hi", "pooled_significant", "seed_robust",
+                   "economically_negligible", "reading"]
+
+
+
+#: Companion table columns = DOSE_COLS plus the two fields that give a companion
+#: row its meaning. write_dose_csv uses extrasaction="ignore", so a companion
+#: written through DOSE_COLS would silently LOSE `tc` -- every row would look
+#: like the registered one.
+DOSE_COMPANION_COLS = ["tc", "companion_verdict"] + DOSE_COLS
+
+
+def write_dose_companion_csv(rows: list[dict], path) -> str:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=DOSE_COMPANION_COLS, extrasaction="ignore")
+        w.writeheader()
+        for r in rows:
+            clean = {}
+            for c in DOSE_COMPANION_COLS:
+                v = r.get(c, "")
+                if isinstance(v, float) and not math.isfinite(v):
+                    v = ""
+                clean[c] = v
+            w.writerow(clean)
+    return str(path)
+
+def write_convention_csv(rows: list[dict], path) -> str:
+    """Same non-finite -> "" convention as write_dose_csv, so the emitted CSV is
+    bit-stable and never carries a bare nan into a table."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=CONVENTION_COLS, extrasaction="ignore")
+        w.writeheader()
+        for r in rows:
+            clean = {}
+            for c in CONVENTION_COLS:
+                v = r.get(c, "")
+                if isinstance(v, float) and not math.isfinite(v):
+                    v = ""
+                clean[c] = v
+            w.writerow(clean)
+    return str(path)
+
+
 # ---------------------------------------------------------------------------
 # verdict record helper
 # ---------------------------------------------------------------------------
@@ -1050,6 +1224,31 @@ def _gap_row_md(g: dict | None) -> str:
             f"{_fmt(g.get('rel'))} |")
 
 
+
+def _tex_sentence(tex: dict, reading: dict) -> str:
+    """THREE states, not two. The old if/else printed "CI covers 0 (turnover
+    unmoved)" for every non-reduced case, which is FALSE when the CI excludes 0
+    on the INCREASING side -- the observed case here (diff +0.6886, CI
+    [0.6618, 0.7154]). Turnover moved a great deal; it moved the other way,
+    because the baseline UNDER-trades and supervision restores oracle-level
+    turnover. Same defect class as the order_attribution note.
+
+    The cost channel is still not credited in either non-reduced case, but the
+    stated reason must match the measurement."""
+    lo, hi = tex.get("ci_lo"), tex.get("ci_hi")
+    excludes = (lo is not None and hi is not None
+                and math.isfinite(lo) and math.isfinite(hi) and (lo > 0) == (hi > 0))
+    if reading.get("t_ex_reduced"):
+        return "T_ex CI excludes 0 (turnover reduced toward the oracle's)."
+    if excludes:
+        return ("T_ex CI EXCLUDES 0 on the INCREASING side (turnover moved, but "
+                "UP: the baseline under-trades and supervision restores oracle-level "
+                "turnover) -> cost channel cannot be credited, and not because "
+                "turnover was unmoved.")
+    return ("T_ex CI covers 0 (turnover unmoved -> cost channel cannot be "
+            "credited regardless of PnL).")
+
+
 def mechanism_memo(mech: dict, verdicts: list[dict], goldilocks_rows: list[dict],
                    dose: dict | None = None) -> str:
     """Descriptive mechanism-adjudication memo (markdown).
@@ -1098,9 +1297,7 @@ def mechanism_memo(mech: dict, verdicts: list[dict], goldilocks_rows: list[dict]
           f"t_ex(rung3) - t_ex(standard_pinn) = {_fmt(tex.get('diff'))} "
           f"(seed 95% CI [{_fmt(tex.get('ci_lo'))}, {_fmt(tex.get('ci_hi'))}], "
           f"n={tex.get('n_seeds', 0)} seeds). "
-          + ("T_ex CI excludes 0 (turnover moved)." if reading.get("t_ex_reduced")
-             else "T_ex CI covers 0 (turnover unmoved -> cost channel cannot be "
-                  "credited regardless of PnL)."),
+          + _tex_sentence(tex, reading),
           "", f"d(gap)/d(tc) slope = {_fmt(mech.get('slope_dgap_dtc'))}.",
           "", f"**Pre-registered reading: `{reading.get('reading', 'n/a')}`** "
           f"(present_i={reading.get('present_i')}, present_ii={reading.get('present_ii')}).",
@@ -1246,15 +1443,53 @@ def run_analysis(confirmatory_dir, out_dir, *, full_dir=None, greek_agg_csv=None
                            "not evaluated: full-sweep artifacts absent")
     verdicts.append(gold_vd)
 
+    # DOSE-RESPONSE TIER COMPANION. The registered dose-response is evaluated AT
+    # the confirmatory cell, i.e. tc = 0.01 -- the tier at which the headline
+    # effect itself measures +0.02%. Testing whether label quality modulates an
+    # effect that is zero at that tier cannot distinguish "labels do not matter"
+    # from "there is nothing here to modulate". The registered verdict stands;
+    # this companion reports the SAME statistic at the other registered tiers so
+    # the verdict's tier-sensitivity is visible rather than inferred. Analysis
+    # only -- no new runs, no new cells, and it does NOT replace the verdict.
+    dose_companion: list[dict] = []
+    if full_ps and labels_npz:
+        for tc_alt in th["tc_tiers"]:
+            if abs(float(tc_alt) - float(th["confirmatory_tc"])) < 1e-12:
+                continue
+            try:
+                vd_alt, rows_alt = dose_response(full_ps, labels_npz, pinn_cfg_path,
+                                                 thresholds=th, tc=tc_alt,
+                                                 n_boot=n_boot, seed=seed)
+            except Exception:
+                continue
+            for r in rows_alt:
+                dose_companion.append({**r, "tc": tc_alt,
+                                       "companion_verdict": vd_alt["verdict"]})
+
     verdicts_path = write_verdicts_csv(verdicts, tables / "threshold_verdicts.csv")
     dose_path = write_dose_csv(dose_rows, tables / "dose_response.csv")
+    if dose_companion:
+        write_dose_companion_csv(dose_companion, tables / "dose_response_tier_companion.csv")
+
+    # A bare `except: conv_rows = []` here would turn a genuine failure into a
+    # silently missing table -- the `null` (not evaluated) vs `error` (evaluation
+    # broke) collapse the contract forbids. Absence of the PnL directory is a
+    # legitimate absence; anything else is a defect and must surface.
+    conv_rows: list[dict] = []
+    if conf_pnl and os.path.isdir(str(conf_pnl)):
+        conv_rows = convention_audit(conf_pnl, thresholds=th, level=level,
+                                     n_boot=n_boot, seed=seed)
+    conv_path = (write_convention_csv(conv_rows, tables / "convention_audit.csv")
+                 if conv_rows else "")
     memo = mechanism_memo(mech, verdicts, gold_rows, dose_vd)
     memo_path = Path(out_dir) / "mechanism_adjudication_memo.md"
     memo_path.write_text(memo)
 
     return {"verdicts": verdicts, "dose_rows": dose_rows, "goldilocks_rows": gold_rows,
-            "mechanism": mech,
+            "mechanism": mech, "convention_rows": conv_rows,
+            "dose_companion_rows": dose_companion,
             "paths": {"threshold_verdicts": verdicts_path, "dose_response": dose_path,
+                      "convention_audit": conv_path,
                       "mechanism_memo": str(memo_path)}}
 
 

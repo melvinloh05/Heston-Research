@@ -44,7 +44,7 @@ The kappa of the contract's 2x2 (the in-model x cost corner) IS the COST paramet
 
 ## Excess-turnover statistic T_ex
 
-t_ex(rung3) - t_ex(standard_pinn) = 0.6886 (seed 95% CI [0.6618, 0.7154], n=10 seeds). T_ex CI covers 0 (turnover unmoved -> cost channel cannot be credited regardless of PnL).
+t_ex(rung3) - t_ex(standard_pinn) = 0.6886 (seed 95% CI [0.6618, 0.7154], n=10 seeds). T_ex CI EXCLUDES 0 on the INCREASING side (turnover moved, but UP: the baseline under-trades and supervision restores oracle-level turnover) -> cost channel cannot be credited, and not because turnover was unmoved.
 
 d(gap)/d(tc) slope = 114.1.
 

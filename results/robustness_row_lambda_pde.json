@@ -1,0 +1,16 @@
+{
+  "robustness_row": true,
+  "lambda_pde_rung3_sourced": 0.0,
+  "lambda_pde_registered": 0.01,
+  "source_arm": "rung3_delta_gamma_vega",
+  "registered_source_arm": "standard_pinn",
+  "candidates": [
+    0.0,
+    0.01,
+    0.1,
+    1.0
+  ],
+  "seed": 42,
+  "steps": 20000,
+  "status": "robustness_result_not_a_second_confirmatory_test"
+}
