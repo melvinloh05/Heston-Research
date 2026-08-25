@@ -616,10 +616,16 @@ def run_saturation_sweep(data: str, seeds, out_dir: str, *,
             f"CAP ({cap}N) model as info_matched_baseline (budget pinned at the cap, NOT N).",
             RuntimeWarning)
 
+    # Hoisted out of the f-string: a conditional spanning newlines inside an f-string
+    # expression is PEP 701 syntax (Python >= 3.12) and is a SyntaxError on 3.9, which
+    # made this module — and with it test_contract_thresholds and
+    # test_run_info_matching — uncollectable under the default `python3` on the dev
+    # machine. Same three outcomes, same strings.
+    plateau_status = ("reached" if plat["plateau_reached"]
+                      else "ROW-CAP ARTIFACT, not a plateau" if plat["plateau_capped"]
+                      else "CAP, not reached")
     print(f"[info-matching] N={N}, multipliers={mults} (cap {cap}), seeds={seeds}; "
-          f"plateau m={pm} ({'reached' if plat['plateau_reached'] else 'ROW-CAP ARTIFACT, '
-                             'not a plateau' if plat['plateau_capped'] else
-                             'CAP, not reached'}). "
+          f"plateau m={pm} ({plateau_status}). "
           f"Wrote {', '.join(p.name for p in paths.values())} to {out}; "
           f"persisted {len(checkpoints)} best.pt under "
           f"{Path(ckpt_root) / _ckpt_arm_dir()}/s<seed>/.")

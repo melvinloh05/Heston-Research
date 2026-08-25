@@ -77,10 +77,43 @@ def test_bank_loaded_run_equals_on_the_fly_bitforbit(tmp_path):
     rows_bank = hb.run_headline(cfg2, provs, None)
 
     assert len(rows_live) == len(rows_bank)
+    # The PATHS are bit-for-bit (asserted directly below); the METRIC columns are
+    # asserted to round-off, because they are accumulated through the pricing stack,
+    # which on this platform reproduces to ~1 ULP rather than exactly on repeated
+    # identical calls (docs/CODE_AUDIT_2026-08-20.md measured 1.8e-15 on the CF
+    # provider). The invariant is that a frozen bank yields the SAME RUN as an
+    # on-the-fly simulation; a stale or mis-keyed bank moves these columns by O(0.1),
+    # nine orders above the tolerance.
     for a, b in zip(rows_live, rows_bank):
         assert a.keys() == b.keys()
         for k in a:
-            assert a[k] == b[k], (k, a[k], b[k])   # bit-for-bit
+            if isinstance(a[k], float) and isinstance(b[k], float):
+                assert a[k] == pytest.approx(b[k], rel=1e-12, abs=1e-12), (k, a[k], b[k])
+            else:
+                assert a[k] == b[k], (k, a[k], b[k])
+
+    # the paths themselves ARE bit-for-bit — that is what a frozen bank guarantees
+    # and it involves no floating-point accumulation, only RNG + arithmetic
+    cfg3 = _tiny_bank_cfg()
+    for seed, tag, dgp_kind, dgp in hb._iter_sim_cells(cfg3):
+        loader = hb._BankLoader(str(bank), cfg3)
+        n_steps = int(round(float(cfg3["engine"]["horizon"]["T_prime"])
+                            * cfg3["engine"]["rebalancing"]["frequency_per_year"]))
+        t_b, S_b, v_b = loader.load(hb._cell_slug(tag, seed), dgp_kind, dgp,
+                                    cfg3["engine"]["simulation"]["n_paths"], n_steps)
+        if dgp_kind == "merton":
+            t_l, S_l, v_l = hb.simulate_merton(
+                dgp, 100.0, float(cfg3["engine"]["horizon"]["T_prime"]), n_steps,
+                cfg3["engine"]["simulation"]["n_paths"], seed,
+                cfg3["benchmark"]["grid"]["r"], cfg3["benchmark"]["grid"]["q"])
+        else:
+            t_l, S_l, v_l = hb.simulate_heston_qe(
+                dgp, 100.0, float(cfg3["engine"]["horizon"]["T_prime"]), n_steps,
+                cfg3["engine"]["simulation"]["n_paths"], seed,
+                cfg3["engine"]["simulation"]["psi_c"])
+        assert np.array_equal(S_b, S_l) and np.array_equal(v_b, v_l), tag
+        assert np.array_equal(t_b, t_l), tag
+        break        # one cell is enough; bank_write/_BankLoader share one code path
 
 
 def test_bank_tampered_sha_raises(tmp_path):

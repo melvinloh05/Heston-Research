@@ -214,25 +214,63 @@ def _write_csv(path, cols, rows) -> None:
 # orchestration
 # ---------------------------------------------------------------------------
 
-def _slice_masks(regime_npz) -> dict:
-    """wing / tau holdout flat masks (C-order) recomputed from the regime grid geometry."""
+def hedge_slice_spec(cfg: dict) -> dict:
+    """The (K, tau) box the confirmatory hedge actually visits, read from the CONTRACT.
+
+    CODE_AUDIT_2026-08-20 finding 2: the OOD Greek metric is scored on the FULL
+    (S, K, tau) grid while the hedging headline is produced in a narrow near-ATM,
+    short-tau box, and the arms rank OPPOSITELY in the two regions (at the baseline
+    anchor, standard_pinn 0.0414 vs feedforward 0.1040 on the full grid; 0.0706 vs
+    0.0269 in the box). Reporting only the full grid therefore cannot see the error
+    that produces the hedging result. This spec makes the box a first-class slice.
+
+    Every bound is contract-derived, never a literal:
+      K    = hedging_simulation.instrument.K            (the hedged strike)
+      tau in [tau0 - T_prime, tau0]                     (instrument.tau0, horizon.T_prime)
+             — the maturities the hedge walks through, inception to liquidation
+      S/K in [WING_LO, WING_HI]                          (the contract's own body/wing split)
+    """
+    hs = cfg["hedging_simulation"]
+    inst = hs["instrument"]
+    tau0 = float(inst["tau0"])
+    t_prime = float(hs["horizon"]["T_prime"])
+    return {"K": float(inst["K"]), "tau_lo": tau0 - t_prime, "tau_hi": tau0,
+            "moneyness_lo": WING_LO, "moneyness_hi": WING_HI}
+
+
+def _slice_masks(regime_npz, cfg: dict | None = None) -> dict:
+    """wing / tau holdout flat masks (C-order) recomputed from the regime grid geometry.
+
+    When `cfg` (the contract) is supplied a third mask, "hedge", is added: the
+    contract-derived box the confirmatory hedge visits (hedge_slice_spec). The strike
+    is snapped to the NEAREST grid node, so the mask is non-empty on any grid whose K
+    axis does not contain the hedged strike exactly.
+    """
     d = np.load(regime_npz)
     S_ax, K_ax, T_ax = (np.asarray(d[f"{a}_axis"], float) for a in ("S", "K", "tau"))
     Sg, Kg, Tg = np.meshgrid(S_ax, K_ax, T_ax, indexing="ij")
     wing = ((Sg / Kg < WING_LO) | (Sg / Kg > WING_HI)).ravel()
     tau = np.zeros(Tg.shape, bool)
     tau[:, :, -1] = True                                    # top tau slice (tau = tau_max)
-    return {"wing": wing, "tau": tau.ravel()}
+    out = {"wing": wing, "tau": tau.ravel()}
+    if cfg is not None:
+        sp = hedge_slice_spec(cfg)
+        k_node = float(K_ax[int(np.argmin(np.abs(K_ax - sp["K"])))])
+        m = ((Kg == k_node) & (Tg >= sp["tau_lo"] - 1e-12) & (Tg <= sp["tau_hi"] + 1e-12)
+             & (Sg / Kg >= sp["moneyness_lo"]) & (Sg / Kg <= sp["moneyness_hi"]))
+        out["hedge"] = m.ravel()
+    return out
 
 
-def _collect(regime_names, slice_kinds_for, provs, arms, seeds, anchors_dir) -> dict:
+def _collect(regime_names, slice_kinds_for, provs, arms, seeds, anchors_dir,
+             cfg: dict | None = None) -> dict:
     """recs[(regime, slice, seed, arm)] = {greek: metricdict} for every needed cell."""
     recs = {}
     for regime in regime_names:
         npz = str(Path(anchors_dir) / f"{regime}_grid.npz")
         slices = {"full": None}
         for kind in slice_kinds_for(regime):
-            slices[kind] = _slice_masks(npz)[kind]
+            slices[kind] = _slice_masks(npz, cfg)[kind]
         for seed in seeds:
             for arm in arms:
                 for slname, mask in slices.items():
@@ -352,11 +390,17 @@ def run_greek_eval(cfg, ckpt_root, arms, seeds, anchors_dir, out_dir,
     provs = {s: build_providers(cfg, ckpt_root, arms, s, r, q, include_oracle=False)
              for s in seeds}
 
-    primary_slices = lambda regime: ()                       # primary: full grid only
+    # primary: the full grid PLUS the contract-derived hedging box. The box is where
+    # the hedging headline is produced, the full grid is where the registered OOD Greek
+    # threshold is scored, and CODE_AUDIT_2026-08-20 measured the arms ranking OPPOSITELY
+    # in the two — so both are reported and neither stands alone. The registered
+    # threshold still reads the "full" rows only (_threshold_rows filters slice == full),
+    # so adding this slice CANNOT move a registered verdict.
+    primary_slices = lambda regime: ("hedge",)
     sanity_slices = lambda regime: ("wing", "tau")           # sanity: + wing / tau holdouts
 
-    prim_recs = _collect(primary, primary_slices, provs, arms, seeds, anchors_dir)
-    san_recs = _collect(sanity, sanity_slices, provs, arms, seeds, anchors_dir)
+    prim_recs = _collect(primary, primary_slices, provs, arms, seeds, anchors_dir, cfg)
+    san_recs = _collect(sanity, sanity_slices, provs, arms, seeds, anchors_dir, cfg)
 
     prim_rows = _perseed_rows(prim_recs, primary, primary_slices, seeds, arms)
     san_rows = _perseed_rows(san_recs, sanity, sanity_slices, seeds, arms)

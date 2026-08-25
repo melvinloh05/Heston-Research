@@ -1,0 +1,14 @@
+{
+  "in-model|oracle": 1.7413908166038201,
+  "in-model|rung3": 1.7371337152237447,
+  "in-model|bs_gamma": 1.585591655023126,
+  "in-model|standard_pinn": 2.4010678501257123,
+  "in-model|standard_pinn_smoothed": 2.4079359181270856,
+  "in-model|mv_oracle": 1.5620971071826457,
+  "misspec|oracle": 2.0816037478803286,
+  "misspec|rung3": 2.0956967763387024,
+  "misspec|bs_gamma": 1.8280656251813596,
+  "misspec|standard_pinn": 3.080270261955993,
+  "misspec|standard_pinn_smoothed": 3.088032420690562,
+  "misspec|mv_oracle": 1.6695761795597945
+}

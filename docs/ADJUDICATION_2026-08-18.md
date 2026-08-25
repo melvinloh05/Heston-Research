@@ -418,3 +418,132 @@ Also recorded here: Melvin's confirmation that **0.575% was reverse-engineered**
 from where our own effect crossed the 10% bar). Prosecution point 3 of §2 is thereby
 confirmed, the tier is dropped from all claim text, and the 10%-bar crossing quoted anywhere
 is the one interpolated from {0.5%, 1%} only: ≈ 0.66%.
+
+---
+
+## 9. Third pass — re-adjudication of the robustness row and the MV-delta comparator (2026-08-19)
+
+Both findings post-date §1–§8 and were flagged by the dossier as requiring re-adjudication before
+drafting. I verified both from the run artifacts (`results/hedging_robustness`,
+`results/mv_delta`, `results/mv_delta_full`) under the registered pooled statistic rather than
+from the dossier's summary. Both reproduce. One carries a structural consequence the dossier
+did not draw.
+
+### 9.1 The robustness row is not a sensitivity check — it is the factorial's missing cell
+
+Verified: at λ_PDE = 0 the confirmatory arms are **bit-identical** to arms already in the record
+— `rung3(λ=0)` vs `sans_pde` and `standard_pinn(λ=0)` vs `feedforward` agree to
+**max |ΔCVaR| = 0.0** across all five common seeds. The robustness row therefore *is* the
+PDE-off row of the residual × supervision factorial, now at 10 seeds.
+
+Two consequences the dossier misses:
+
+1. **The factorial is COMPLETE and the interaction is IDENTIFIED.** Claim memo §4.2 and dossier
+   §10 both say three of four cells are populated, §10 adding that `feedforward` "ablates
+   boundary conditions as well, so using it there would introduce a confound." That is stale:
+   `pinn_config.yaml` sets `use_bc: false` globally ("v6: NO separate boundary-condition
+   term"), so there is no BC to confound — and the bit-identity proves it empirically. **D1 is
+   resolved by data, not by a decision.** §10 and claim memo §4.2 must be corrected; the v7
+   prohibition on "complete factorial" language can now be lifted on evidence.
+2. **The completed 2×2 relocates the headline.** Misspecified, tc = 0, CVaR95, 10 seeds:
+
+   | | PDE residual ON | PDE residual OFF |
+   |---|---|---|
+   | supervision OFF | 3.0518 | 2.1370 |
+   | supervision ON | 2.0904 | 2.0758 |
+
+   Supervision effect **+0.9614 with the residual, +0.0611 without — a 15.7× interaction**.
+   The residual's own effect: it makes the unsupervised baseline **0.9148 (43%) worse**, and is
+   inert (−0.0145) once labels are present. So **93.6% of the registered headline is repair of
+   damage the PDE residual does to the baseline's delta**, and 6.4% is what supervision adds to
+   an undamaged price-only network.
+
+   This supersedes §6's Story 1: "baseline pathology" is no longer an inference from turnover
+   and the feedforward anomaly — it is a measured main-effect/interaction decomposition.
+
+**On "the residual handicaps the baseline" (dossier §11): correct in effect, but the framing
+must not concede a rigged comparison.** λ_PDE = 0.01 was `standard_pinn`'s **own
+validation optimum** (`lambdas_selected.yaml`: 0.1697 at 0.01 vs 0.1757 at 0.0, 0.333 at 0.1,
+0.372 at 1.0), selected under the pre-registered validation-only rule and in the direction the
+contract called conservative. The finding is therefore not "we crippled the baseline" but
+**"for this arm the pre-registered selection proxy is anti-correlated with the primary metric:
+a 3.4% validation-score gain costs 42.8% hedging degradation."** That is a real and reportable
+result about hyperparameter selection in PINNs, and it is the answer to the referee question
+"did you handicap your baseline?" — no, we gave it its validation-best λ and report both.
+
+**Convention note (per open item 1):** three numbers are circulating for the same quantity —
+pooled +2.95%, per-seed mean +2.80% ± 2.50%, dossier +2.86%. It is seed-robust either way
+(seed CI [+1.25%, +4.35%]) but the dossier must state which convention it prints.
+
+### 9.2 The MV-delta comparator: verified, and it re-bases the headline metric
+
+Verified from the banks (5 seeds; the agg CSVs' `n_seeds=1` is an emission defect — only seed 46
+reaches the per-seed CSV — while `summary.json` and the npz banks carry all five, and my
+recomputation matches `summary.json` exactly):
+
+| misspec, tc = 0 | CVaR95 | vs oracle (pooled) | seed-robust? |
+|---|---|---|---|
+| `mv_oracle` | 1.6696 | **+19.79%** [−0.4217, −0.4020] | yes (−0.4120 ± 0.0135) |
+| `bs_gamma` | 1.8281 | +12.13% | yes |
+| `oracle` (frictionless Δ) | 2.0816 | — | — |
+| `rung3` | 2.0957 | −0.67% | yes |
+
+In-model: `mv_oracle` +10.31%, `bs_gamma` +8.94%. **Story 3 is explained, not merely observed:**
+Δ_MV = ∂_S C + (ρξ/S)·∂_v C dominates the exact delta, and `bs_gamma` recovers 87% of that gap
+in-model / 61% misspecified — it was approximating the MV delta by accident. The registered
+hedging metric rewards proximity to the MV delta, not to the exact one.
+
+Consequence for the contract's own headline metric: `headline_scale_free` presupposes the oracle
+is the ceiling. It is not. rung3 closes **98.59%** of the baseline-to-oracle gap but only
+**69.80%** of the baseline-to-MV gap. The residual ~30% is **not reachable by Greek accuracy at
+all** — it requires a different hedge ratio. This is the third independent way the registered
+scorecard mis-measures its own object (after the 1% tier and the λ_PDE sourcing).
+
+Citation status unchanged: the minimum-variance / local-risk-minimisation literature
+(Föllmer–Schweizer family) is **not in the verified record**. Describe the estimator by its
+formula and its measured behaviour; cite nothing until a source is obtained and read.
+
+### 9.3 What this does to the surviving claim
+
+The §7 sentence quoted "+31.5% misspecified CVaR95 at zero cost, carried by delta supervision"
+without knowing (a) that the number is 15.7× smaller under the other pre-registered λ_PDE
+sourcing, and (b) that it is measured against a reference hedge which is itself ~20%
+suboptimal. Both are now known. **Revised surviving claim:**
+
+> "Supervising Δ, Γ and ν in a parametric Heston PINN cuts held-out out-of-distribution Greek
+> RMSE by 77–93% against a price-only network at either pre-registered PDE-residual weight —
+> whereas the delta-only hedging benefit is not a robust property of supervision: at zero
+> transaction cost it is +31.5% or +2.9% depending on which pre-registered arm supplies the
+> shared λ_PDE (93.6% of the larger figure being repair of damage the residual itself does to
+> the unsupervised baseline), it vanishes at the registered 1% cost tier, and at its largest it
+> closes only 70% of the distance to a minimum-variance delta that requires no learning at all."
+
+The **asymmetry is the paper's spine**: the accuracy result is invariant to the design choice
+that swings the hedging result 15.7-fold. Supervision reliably buys Greeks; whether Greeks buy
+hedging performance depends on choices the experimenter makes, not on the treatment.
+
+**Additional claims that now die:**
+8. "+31.5%" quoted unqualified anywhere — it is one of two pre-registered readings.
+9. "rung3 closes ~99% of the baseline-to-oracle gap" as a headline — wrong denominator; 69.8%
+   against the best available hedge.
+10. "The PDE residual is inert" (my §7 item 7) — **corrected**: inert *with* labels (−0.0145),
+    actively harmful *without* them (+0.9148, 43%). Neither "earns its keep" nor "inert" is
+    right; "harmful alone, redundant alongside labels" is.
+
+**Abstract MUST NOT say (fourth entry):** "Sobolev supervision improves misspecified delta-only
+hedging CVaR95 by 31.5%" — or any unqualified single figure for that quantity.
+
+**Open items, revised:** the λ_PDE robustness row (was rank 3) and the MV comparator (was rank
+2) are **discharged**. New rank-2 item: re-emit `results/mv_delta*/confirmatory/
+headline_delta_only_agg.csv` with all five seeds (currently `n_seeds=1`; nothing may cite those
+CSVs until fixed). New rank-3 item: correct the "three of four cells" statement in dossier §10
+and claim memo §4.2, and lift the "complete factorial" prohibition on evidence. A supervise-
+toward-Δ_MV arm is the obvious follow-up experiment but is not needed for this paper.
+
+**Pivot ruling, updated.** The centre of gravity has moved again, and in a consistent direction.
+Three independent design choices — the cost tier, the λ_PDE sourcing, and the reference hedge —
+each move the headline more than the treatment does. That is no longer a caveat list; it is the
+paper's most defensible contribution: *a pre-registered Greek-supervision benchmark in which the
+registered headline is dominated by registration choices, reported with the accuracy result that
+survives all of them.* Written that way it is stronger than the hedging paper originally
+intended, and it is honest.

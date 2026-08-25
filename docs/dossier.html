@@ -1,0 +1,706 @@
+<title>Sobolev-PINN Results Dossier</title>
+<style>
+:root{
+  --ground:#FBFBFD; --panel:#FFFFFF; --ink:#1A1D24; --ink-2:#3A4050;
+  --muted:#5A6070; --rule:#E2E5EC; --rule-2:#EDEFF4;
+  --accent:#2D4A7C; --accent-soft:#EAF0F9;
+  --fail:#B03A32; --fail-bg:#FBEDEC; --pass:#2F6B4F; --pass-bg:#EAF3EE;
+  --flag:#9A6B1F; --flag-bg:#FAF2E4; --null:#6B7280; --null-bg:#F0F1F4;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#14161B; --panel:#1A1D24; --ink:#E8EAEF; --ink-2:#C2C7D2;
+    --muted:#939AAA; --rule:#2B303B; --rule-2:#22262F;
+    --accent:#8FB3E0; --accent-soft:#1D2836;
+    --fail:#E38078; --fail-bg:#2E1E1D; --pass:#7FBF9C; --pass-bg:#182620;
+    --flag:#D6A551; --flag-bg:#2A2318; --null:#9AA1AF; --null-bg:#22262F;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#14161B; --panel:#1A1D24; --ink:#E8EAEF; --ink-2:#C2C7D2;
+  --muted:#939AAA; --rule:#2B303B; --rule-2:#22262F;
+  --accent:#8FB3E0; --accent-soft:#1D2836;
+  --fail:#E38078; --fail-bg:#2E1E1D; --pass:#7FBF9C; --pass-bg:#182620;
+  --flag:#D6A551; --flag-bg:#2A2318; --null:#9AA1AF; --null-bg:#22262F;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--ground); color:var(--ink); margin:0;
+  font:16px/1.62 system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:56px 28px 96px}
+.measure{max-width:68ch}
+h1,h2,h3{font-family:"Iowan Old Style",Georgia,"Times New Roman",serif;font-weight:600;text-wrap:balance;margin:0}
+h1{font-size:2.35rem;line-height:1.15;letter-spacing:-.01em}
+h2{font-size:1.45rem;margin:0 0 4px}
+h3{font-size:1.05rem;margin:0 0 6px}
+p{margin:0}
+.stack{display:flex;flex-direction:column;gap:16px}
+.stack-lg{display:flex;flex-direction:column;gap:56px}
+.eyebrow{
+  font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+  letter-spacing:.13em;text-transform:uppercase;color:var(--accent);
+}
+.lede{font-size:1.08rem;color:var(--ink-2)}
+.muted{color:var(--muted)}
+.small{font-size:.9rem}
+hr{border:0;border-top:1px solid var(--rule);margin:0}
+header{border-bottom:2px solid var(--ink);padding-bottom:20px;margin-bottom:36px}
+.meta{
+  display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:14px;
+  font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);
+}
+section{scroll-margin-top:20px}
+.sec-head{display:flex;gap:14px;align-items:baseline;border-bottom:1px solid var(--rule);padding-bottom:8px;margin-bottom:20px}
+.sec-n{font:600 13px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);padding-top:4px}
+/* verdict chips */
+.strip{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0 0}
+.chip{
+  display:inline-flex;align-items:baseline;gap:7px;padding:6px 11px;border-radius:3px;
+  font:12px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;border:1px solid transparent;
+}
+.chip b{font-weight:600}
+.v-fail{background:var(--fail-bg);color:var(--fail);border-color:var(--fail)}
+.v-pass{background:var(--pass-bg);color:var(--pass);border-color:var(--pass)}
+.v-flag{background:var(--flag-bg);color:var(--flag);border-color:var(--flag)}
+.v-null{background:var(--null-bg);color:var(--null);border-color:var(--null)}
+/* tables */
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:4px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:.875rem}
+th,td{padding:9px 13px;text-align:left;border-bottom:1px solid var(--rule-2);white-space:nowrap}
+thead th{
+  background:var(--rule-2);font:600 11px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+}
+tbody tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+td.key{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;color:var(--ink-2)}
+tr.hl td{background:var(--accent-soft)}
+.tag{font:600 10px/1 ui-monospace,monospace;letter-spacing:.06em;text-transform:uppercase;padding:3px 6px;border-radius:2px}
+.t-fail{background:var(--fail-bg);color:var(--fail)}
+.t-pass{background:var(--pass-bg);color:var(--pass)}
+.t-flag{background:var(--flag-bg);color:var(--flag)}
+.t-null{background:var(--null-bg);color:var(--null)}
+caption{caption-side:bottom;text-align:left;padding:9px 13px;font-size:.82rem;color:var(--muted);border-top:1px solid var(--rule-2)}
+/* callouts */
+.note{border-left:3px solid var(--accent);background:var(--accent-soft);padding:14px 18px;border-radius:0 3px 3px 0}
+.note.warn{border-left-color:var(--flag);background:var(--flag-bg)}
+.note.bad{border-left-color:var(--fail);background:var(--fail-bg)}
+.note h3{margin-bottom:5px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+ul,ol{margin:0;padding-left:1.15em}
+li{margin-bottom:7px}
+li:last-child{margin-bottom:0}
+code{font:.85em ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--rule-2);padding:1px 5px;border-radius:2px}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:18px 20px}
+.why{border:1px solid var(--rule);border-left:3px solid var(--muted);background:var(--panel);padding:12px 16px;border-radius:0 3px 3px 0}
+.why .lab{font:600 10px/1 ui-monospace,monospace;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:5px}
+.why p{font-size:.88rem;color:var(--ink-2)}
+.why .obj{margin-top:7px;font-size:.85rem}
+.why .obj b{color:var(--accent)}
+.kpi{font:600 1.7rem/1 ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.kpi.good{color:var(--pass)} .kpi.bad{color:var(--fail)} .kpi.warn{color:var(--flag)}
+.kpi-label{font:600 10px/1.3 ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-top:7px}
+a{color:var(--accent)}
+@media (max-width:600px){.wrap{padding:32px 16px 64px}h1{font-size:1.8rem}}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Post-audit revision · 20 Aug · supersedes the 18 Aug dossier</div>
+  <h1 style="margin-top:10px">No bug inverted the results. A hyperparameter did — and the treatment arm was sitting at the oracle the whole time.</h1>
+  <div class="meta">
+    <span>rev. 20 Aug 2026</span><span>165 training runs · 10 seeds confirmatory</span>
+    <span>λ<sub>PDE</sub> curve replicated independently, |diff| = 0</span>
+    <span>labels frozen @ v6-labels-20260812</span><span>suite 282 pass / 0 fail</span>
+  </div>
+</header>
+
+<div class="stack-lg">
+
+<section>
+  <div class="sec-head"><div class="sec-n">01</div><div><h2>What changed, and what the audit was asked to find</h2></div></div>
+  <div class="stack measure">
+    <p class="lede">The 18 August dossier reported that every registered endpoint had a verdict and that four of eight fail. That still stands. This revision answers a different and sharper question, put by the adviser after reading the methods draft beside the results: <b>is there a bug in the collection code that inverted every directional prediction?</b></p>
+    <p><b>No such bug exists.</b> Twelve components were re-derived against the frozen artifacts rather than read — settlement and self-financing recursion, CVaR sign, CRN discipline, premium and terminal-liability conventions, provider state symmetry, the PDE residual term by term, the MV comparator&#8217;s parameter sourcing, the dose labels, and the Greek code path shared by grid and hedge evaluation. All correct. The numbers are what the code was asked to compute (&#167;13&#8211;14, and <code>docs/CODE_AUDIT_2026-08-20.md</code> &#167;1).</p>
+    <p>The audit instead found two <em>design</em> defects, and the first of them is worse than a bug would have been, because a bug can be fixed and republished whereas this removes a number from the class of things that can be quoted at all:</p>
+    <ol>
+      <li><b>The zero-cost headline is a readout of &#955;<sub>PDE</sub>, not a measurement of supervision.</b> Swept over four new values, it runs monotonically from +2.9% to +31.5% with no interior optimum and no plateau. Decomposed, <b>rung 3 never moves</b> (2.076&#8594;2.090 against an oracle of 2.079); the entire curve is the unsupervised baseline degrading by 43%. And the registered &#955;<sub>PDE</sub> = 0.01 is the <em>worst</em> point on a fine grid re-scored with the contract&#8217;s own selection rule, which prefers ~1e&#8722;4. (&#167;13)</li>
+      <li><b>The two headline metrics are measured in disjoint regions of (S, K, &#964;) in which the arms rank oppositely.</b> On the full OOD grid the residual-only baseline beats a price-only net 2.5&#215;; inside the hedging box it loses 2.6&#215;. Seed-robust, all five seeds, all anchors. (&#167;14)</li>
+    </ol>
+    <p><b>Two claims are withdrawn outright as a result.</b> The cost-tier reframe of &#167;04 does not survive the corrected &#955;<sub>PDE</sub> &#8212; its strongest number, +14.54% at Armstrong &amp; Tatlow&#8217;s stress tier, becomes &#8722;0.30% at the criterion&#8217;s own optimum. And &#8220;the hedging and accuracy axes move independently&#8221; is an artifact of &#167;14: measured in one region, accuracy does predict hedging. &#167;11&#8217;s hyperparameter-sourcing finding is not withdrawn but is subsumed &#8212; it is one point on the curve in &#167;13.</p>
+    <div class="note measure">
+      <h3>What survives is smaller, harder, and hyperparameter-independent</h3>
+      <p class="small"><b>rung 3 attains oracle-level delta-only CVaR<sub>95</sub> at every &#955;<sub>PDE</sub> tested including zero</b> (2.076&#8211;2.090 vs oracle 2.079), seed-robust. It is the one quantity in the study that does not move when the knob moves, and it should lead. Out-of-distribution Greek accuracy also survives, reported beside its region (&#167;14). The three falsification controls and the re-tested Sakuma null are untouched by this audit.</p>
+    </div>
+    <p class="small muted">Read order for an adjudicator: &#167;13 and &#167;14 first &#8212; they change what &#167;04, &#167;05, &#167;07 and &#167;11 are allowed to say. &#167;15 carries the resulting claim-status table and the open items.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">02</div><div><h2>The pre-training power check passed — but the arm chosen decides it</h2></div></div>
+  <div class="stack">
+    <div class="why measure">
+      <span class="lab">What the headroom gate is for</span>
+      <p>Before any arm was trained, it hedges the confirmatory instrument twice — once with exact oracle Greeks, once with oracle Greeks corrupted by a field calibrated to a <em>plausible network's</em> gamma error. The spread between the two P&amp;L distributions is a ceiling on any effect the design could detect.</p>
+      <p class="obj"><b>Objection targeted:</b> “a null result here just means the experiment was underpowered.” The gate answers that in advance, and it authorises the compute spend.</p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Pilot fit supplying the corruption scale</th><th class="num">&#963;<sub>&#915;</sub></th><th class="num">relative</th><th class="num">TC 0%</th><th class="num">TC 1%</th><th class="num">TC 2%</th></tr></thead>
+        <tbody>
+          <tr class="hl"><td><b>standard PINN</b> — the error the claim proposes to remove</td><td class="num">4.05e&#8722;3</td><td class="num">32.0%</td><td class="num">+100.8%</td><td class="num">+37.5%</td><td class="num">+16.0%</td></tr>
+          <tr><td>rung 3 — the error <em>remaining after</em> the fix</td><td class="num">1.25e&#8722;4</td><td class="num">0.99%</td><td class="num">+2.5%</td><td class="num">+0.4%</td><td class="num">+0.1%</td></tr>
+        </tbody>
+        <caption>Spread against a pre-registered 10% threshold; <code>clipped_frac</code> = 0.063 on the standard-PINN pilot, inside the 0.25 region-of-validity bound, CI excluding zero in every seed. Both pilots divide by the same frozen reference, so the 32&#215; separation is like-for-like: <b>&#915; supervision cuts gamma error by 97%.</b></caption>
+      </table>
+    </div>
+    <div class="note warn measure">
+      <h3>Calibrating on the wrong arm inverts the verdict</h3>
+      <p class="small">Read off rung 3, the spread is 2.5 / 0.4 / 0.1% and the contract's non-optional retune branch appears to fire. That is the residual <em>floor</em> after the fix, not the ceiling on the claim. The contract says “plausible PINN gamma error” without pinning the arm, and the claim removes the <em>baseline's</em> error — so the baseline's sigma is the right input. No gate verdict should be reported without naming the arm its sigma came from.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">03</div><div><h2>Registered scorecard</h2></div></div>
+  <div class="stack">
+    <div class="strip">
+      <span class="chip v-fail"><b>fail</b> confirmatory cell</span>
+      <span class="chip v-fail"><b>fail</b> order attribution</span>
+      <span class="chip v-flag"><b>flat</b> dose–response</span>
+      <span class="chip v-fail"><b>fail</b> OOD Greek (rung3)</span>
+      <span class="chip v-fail"><b>fail</b> OOD Greek (rung2, secondary)</span>
+      <span class="chip v-flag"><b>flag</b> Sakuma null</span>
+      <span class="chip v-null"><b>channel_i</b> mechanism</span>
+      <span class="chip v-null"><b>no decisive regime</b> Bates</span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Criterion</th><th>Declared</th><th class="num">Observed</th><th>95% CI</th><th>Verdict</th></tr></thead>
+        <tbody>
+          <tr class="hl"><td>Confirmatory cell (rung3 vs standard PINN, 1% TC)</td><td class="key">≥10% &amp; CI excl 0</td><td class="num">+0.02%</td><td class="key">[−0.0242, +0.0242]</td><td><span class="tag t-fail">fail</span></td></tr>
+          <tr class="hl"><td>Order attribution (rung2 beats rung1)</td><td class="key">CI excl 0</td><td class="num">+0.0574</td><td class="key">[+0.0527, +0.0621]</td><td><span class="tag t-fail">fail</span></td></tr>
+          <tr><td>Dose–response monotonicity <span class="muted">(evaluated at the 1% cell)</span></td><td class="key">ρ&gt;0 &amp; boot p&lt;0.05</td><td class="num">ρ = 0.029</td><td class="key">p = 0.074</td><td><span class="tag t-flag">flat</span></td></tr>
+          <tr><td>OOD Greek RMSE at price parity (rung3)</td><td class="key">≥15% &amp; parity ±10%</td><td class="num">0.864</td><td class="key">[0.859, 0.868]</td><td><span class="tag t-fail">fail</span></td></tr>
+          <tr><td>OOD Greek RMSE (rung2, secondary)</td><td class="key">non-binding</td><td class="num">0.870</td><td class="key">[0.849, 0.890]</td><td><span class="tag t-fail">fail</span></td></tr>
+          <tr><td>Sakuma null, in-model × zero cost</td><td class="key">|rel| &lt; 0.02</td><td class="num">0.272</td><td class="key">[−0.665, −0.631]</td><td><span class="tag t-flag">flag</span></td></tr>
+          <tr><td>Mechanism adjudication</td><td class="key">falsifier pre-stated</td><td class="num">−0.962</td><td class="key">[−0.980, −0.944]</td><td><span class="tag t-null">channel_i</span></td></tr>
+          <tr><td>Bates severity sweep</td><td class="key">locate decisive regime</td><td class="num">0.311</td><td class="key">[0.283, 0.339]</td><td><span class="tag t-null">none</span></td></tr>
+        </tbody>
+        <caption>Generated by <code>make_registration_ledger.py</code>; declared values are read live from <code>heston_benchmark_v6.yaml</code> rather than transcribed, so contract and paper cannot drift. Two failures need reading carefully — see §03 and §05. <b>The 20 August audit leaves every verdict in this table unchanged</b>; at the corrected &#955;<sub>PDE</sub> the confirmatory row fails harder rather than differently (§13).</caption>
+      </table>
+    </div>
+    <div class="note bad measure">
+      <h3>Order attribution is a significant reversal, not a null</h3>
+      <p class="small">The CI <b>excludes</b> zero on the harmful side: adding Γ supervision makes hedging significantly <em>worse</em> at the 1% tier. The analysis code originally printed “CI includes 0” for this row — a false statement produced by an <code>else</code> branch that assumed the only way to fail was an inclusive interval. Fixed; suite green at 275 tests.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">04</div><div><h2>The cost tier is the story &#8212; <span style="color:var(--fail)">withdrawn</span></h2></div></div>
+  <div class="stack">
+    <div class="note bad measure">
+      <h3>SUPERSEDED by &#167;13. Retained as a record of what was believed on 18 August.</h3>
+      <p class="small">Every number below is conditional on &#955;<sub>PDE</sub> = 0.01, and &#167;13 shows that value is the worst point on the contract&#8217;s own selection criterion. At the criterion&#8217;s optimum (~1e&#8722;4) the argument&#8217;s load-bearing number &#8212; <b>+14.54% at A&amp;T&#8217;s 0.5% stress tier</b> &#8212; reads <b>&#8722;0.30%</b>. The effect is gone there, not merely reduced.</p>
+      <p class="small" style="margin-top:8px">The reframe should therefore be <b>withdrawn, not labelled</b>: it cannot be stated at any &#955;<sub>PDE</sub> the selection rule endorses. What remains true and worth keeping is the narrower registration critique &#8212; the confirmatory tier is ~200&#215; the rate A&amp;T calibrate for the leg this strategy trades. That is a design error to own; it is no longer a route to a positive result.</p>
+    </div>
+    <p class="lede measure">Measured, not interpolated — same paths, one pass, 10 seeds. The effect is large and significant across the whole realistic range and collapses only at the registered tier.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Transaction cost</th><th>Reference</th><th class="num">standard PINN</th><th class="num">rung 3</th><th class="num">Improvement</th><th>CI excl 0</th></tr></thead>
+        <tbody>
+          <tr><td class="key">0.000%</td><td>frictionless</td><td class="num">3.052</td><td class="num">2.090</td><td class="num">+31.50%</td><td>yes</td></tr>
+          <tr class="hl"><td class="key">0.005%</td><td>A&amp;T “normal”, <b>underlying leg</b></td><td class="num">3.061</td><td class="num">2.102</td><td class="num">+31.32%</td><td>yes</td></tr>
+          <tr><td class="key">0.250%</td><td>A&amp;T “normal”, option leg <span class="muted">(not our leg)</span></td><td class="num">3.493</td><td class="num">2.700</td><td class="num">+22.70%</td><td>yes</td></tr>
+          <tr class="hl"><td class="key">0.500%</td><td>A&amp;T <b>high / stress</b>, both legs</td><td class="num">3.940</td><td class="num">3.367</td><td class="num">+14.54%</td><td>yes</td></tr>
+          <tr><td class="key">0.575%</td><td>—</td><td class="num">4.075</td><td class="num">3.578</td><td class="num">+12.20%</td><td>yes</td></tr>
+          <tr class="hl"><td class="key">1.000%</td><td><b>registered confirmatory tier</b></td><td class="num">4.860</td><td class="num">4.859</td><td class="num">+0.01%</td><td><b>no</b></td></tr>
+          <tr><td class="key">2.000%</td><td>registered high tier</td><td class="num">6.899</td><td class="num">8.219</td><td class="num">−19.12%</td><td>yes</td></tr>
+        </tbody>
+        <caption>CVaR<sub>95</sub> of hedging loss, misspecified combined-perturbation cell. A&amp;T rates verified from the source PDF §4.3: normal = 0.005% underlying / 0.25% option; high = 0.5% both.</caption>
+      </table>
+    </div>
+    <div class="note warn measure">
+      <h3>The registered tier is ~200× the calibrated rate for the leg we trade</h3>
+      <p class="small" style="margin-bottom:9px">This is a design error in the registration. The defensible treatment is to own it as one rather than argue around it: the registered verdict stands as <b>fail</b> and is reported first, while the cost-response curve is exploratory and belongs in its own subsection.</p>
+      <p class="small">This strategy is <b>delta-only in the underlying</b>. Armstrong &amp; Tatlow calibrate that leg at 0.005%. Our registered confirmatory tier is 1% — 200× that, and 2× their own stress scenario. The effect clears the pre-registered 10% bar at every tier through 0.575%, <em>including</em> their stress tier at 14.54%, and reaches zero within 0.001pp of 1%.</p>
+    <h3 style="margin-top:6px">The same tier turns a working test into a null</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>&#963; vs &#963;=0, <b>tc = 0</b></th><th class="num">diff</th><th>95% CI</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="key">&#963; = 0.10</td><td class="num">+0.0112</td><td class="key">[+0.0101, +0.0122]</td><td>excludes 0</td></tr>
+          <tr><td class="key">&#963; = 0.25</td><td class="num">+0.0229</td><td class="key">[+0.0197, +0.0260]</td><td>excludes 0</td></tr>
+          <tr><td class="key">&#963; = 0.50</td><td class="num">+0.0432</td><td class="key">[+0.0345, +0.0513]</td><td>excludes 0</td></tr>
+        </tbody>
+        <caption>Noisier gamma labels, monotonically worse hedging &#8212; every step significant under the registered pooled statistic. Run the <b>unchanged registered criterion</b> across the registered tiers and it returns <b>monotone at tc = 0</b>, <b>flat at 1%</b>, <b>flat at 2%</b>.</caption>
+      </table>
+    </div>
+    <div class="note warn measure">
+      <h3>The registered dose-response test is not broken &#8212; it was aimed at a dead tier</h3>
+      <p class="small">Testing whether label quality modulates an effect that measures +0.02% at that tier cannot separate &#8220;labels do not matter&#8221; from &#8220;there is nothing here to modulate&#8221;. Gamma-label correctness <em>does</em> drive hedging, monotonically, wherever the effect exists. This is the <b>fifth</b> registered endpoint the 1% tier degrades &#8212; after the confirmatory cell, order attribution, <code>goldilocks_bates</code>, and <code>headline_scale_free</code> being undefined there.</p>
+    </div>
+  </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">04b</div><div><h2>Which statistical convention &#8212; and does the effect matter</h2></div></div>
+  <div class="stack">
+    <div class="why measure">
+      <span class="lab">Why this is reported</span>
+      <p>The contract requires a paired bootstrap over common-random-number paths <em>with seed variance separated</em>. Those are two different questions: <b>pooled</b> asks whether these trained hedgers differ on this path population; <b>seed-level</b> asks whether the difference replicates across training runs. Nothing previously emitted them side by side, so a claim could rest on whichever convention favoured it.</p>
+      <p class="obj"><b>Objection targeted:</b> &#8220;you picked the error bars that gave you the answer.&#8221;</p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Contrast</th><th>tc</th><th>Reading</th></tr></thead>
+        <tbody>
+          <tr><td>headline rung3 vs standard PINN</td><td class="key">1%</td><td>neither &#8212; <span class="muted">the primary fail is robust to convention</span></td></tr>
+          <tr class="hl"><td>+&#947; rung1&#8594;rung2</td><td class="key">1%</td><td>significant and seed-robust, but <b>economically negligible</b></td></tr>
+          <tr class="hl"><td>+&#957; rung2&#8594;rung3</td><td class="key">1%</td><td><b>pooled-significant only</b> &#8212; does not replicate across seeds</td></tr>
+          <tr><td>+&#916;, +&#947;, headline</td><td class="key">0%</td><td>significant and seed-robust</td></tr>
+        </tbody>
+        <caption>Full table: <code>results/analysis/results/tables/convention_audit.csv</code>. The negligibility floor reuses <code>acceptance_thresholds.sakuma_null_rel_tol</code> = 0.02 &#8212; pre-registered, and written for exactly this job. Reusing it <em>extends</em> it from one check to all checks, which is disclosed rather than assumed.</caption>
+      </table>
+    </div>
+    <p class="measure">Two consequences. The gamma reversal that fails order attribution is <b>1.2% relative</b> &#8212; statistically real, below the pre-registered negligibility band; &#8220;significantly worsens hedging&#8221; overstates it. And the vega rung at 1% is significant on the path population but does <em>not</em> replicate across training runs, so no claim about vega supervision generalising may rest on it.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">05</div><div><h2>Who earns the gain: it is first-order</h2></div></div>
+  <div class="stack">
+    <div class="grid2">
+      <div class="card"><div class="kpi good">91.9%</div><div class="kpi-label">of the hedging gain from +Δ</div></div>
+      <div class="card"><div class="kpi warn">6.5%</div><div class="kpi-label">from +Γ — the paper's claimed rung</div></div>
+      <div class="card"><div class="kpi">1.7%</div><div class="kpi-label">from +ν</div></div>
+      <div class="card"><div class="kpi good">60%</div><div class="kpi-label">OOD Γ RMSE cut by that same +Γ step</div></div>
+    </div>
+    <p class="measure">The draft places the causal claim on the rung 1 → rung 2 gap. That gap is <b>2.04 of 31.50 percentage points</b> at zero cost. The same step cuts out-of-distribution Γ error by 60%. Γ labels make the network dramatically better at Γ, and a delta-only hedge can only partly spend that.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Ladder step</th><th class="num">TC 0%</th><th class="num">TC 0.005%</th><th class="num">TC 0.5%</th><th class="num">TC 1%</th></tr></thead>
+        <tbody>
+          <tr><td><b>+Δ</b> standard → rung1</td><td class="num">−0.883 ✓</td><td class="num">−0.881 ✓</td><td class="num">−0.546 ✓</td><td class="num">−0.066 ✓</td></tr>
+          <tr><td><b>+Γ</b> rung1 → rung2</td><td class="num">−0.0627 ✓</td><td class="num">−0.0625 ✓</td><td class="num">−0.0227 ✓</td><td class="num">+0.0574 ✗</td></tr>
+          <tr><td><b>+ν</b> rung2 → rung3</td><td class="num">−0.0163 ✓</td><td class="num">−0.0162 ✓</td><td class="num">−0.0048 ✓</td><td class="num">+0.0071 ✗</td></tr>
+        </tbody>
+        <caption>Paired pooled CVaR differences (arm − baseline; negative = better). ✓ = CI excludes zero favourably, ✗ = excludes zero unfavourably. <b>Every cell excludes zero.</b> The <b>&#915; and &#957; rungs reverse at 1%</b>, while <b>&#916; still helps there</b> (&#8722;0.0655, CI [&#8722;0.0872, &#8722;0.0433]); all three reverse only at 2%. The frontier is therefore ordered by rung rather than shared: the second-order increments cross first, and the first-order increment survives a further tier. CIs are the registered pooled per-path bootstrap; per-seed intervals are wider and call the &#957; rung at 1% a null, so the convention must be fixed once and both reported.</caption>
+      </table>
+    </div>
+    <p class="measure small muted">The Γ benefit is therefore <b>real, significant, and small</b> — both halves of that sentence belong in the paper.</p>
+    <div class="note warn measure">
+      <h3>Conditional on &#955;<sub>PDE</sub> = 0.01 — the shares have not been re-measured</h3>
+      <p class="small">Every number in this section is computed at the registered &#955;<sub>PDE</sub>, and &#167;13 shows the total gap at that value is 4&#215; the gap at the selection criterion&#8217;s optimum. If the gap is mostly baseline damage, then &#8220;91.9% of the gain comes from +&#916;&#8221; is a decomposition <em>of that damage</em>, and the &#915; rung&#8217;s share at a defensible &#955;<sub>PDE</sub> is <b>unknown</b>. Re-running rungs 1 and 2 at 1e&#8722;4 is cheap and is open item 1 in &#167;15. Until it is done, the ladder shares should be reported with the &#955; stated, and no causal weight placed on the specific percentages.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">06</div><div><h2>The mechanism is neither registered channel</h2></div></div>
+  <div class="stack measure">
+    <p>The registration crosses <b>(i) model-uncertainty robustness</b> against <b>(ii) transaction-cost / turnover</b>. Applied mechanically the rule returns channel (i). The in-model cell falsifies that reading:</p>
+    <div class="scroll" style="max-width:100%">
+      <table>
+        <thead><tr><th>Cell (TC = 0)</th><th class="num">rung3 vs standard PINN</th></tr></thead>
+        <tbody>
+          <tr><td>In-model — no misspecification at all</td><td class="num">+27.2%</td></tr>
+          <tr><td>Misspecified</td><td class="num">+31.5%</td></tr>
+        </tbody>
+        <caption>Misspecification contributes ~4pp of a 31.5pp effect.</caption>
+      </table>
+    </div>
+    <p><b>About 86% of the effect exists with no misspecification and no costs.</b> The dominant channel is plain Δ-estimation quality, and the registered 2×2 has no bin for it — it presumed the baseline's Greeks would be roughly serviceable. Mean PnL is identical across arms at zero cost (+0.0773 each), so this is pure tail reduction, not return.</p>
+    <div class="note">
+      <h3>“In-model” is not “in-distribution”</h3>
+      <p class="small">Hedging trains at the <code>baseline</code> anchor, and every named anchor has a 10%-relative-radius ball excised from the training sample. Measured on the frozen artifact, the nearest training point to <code>baseline</code> sits at L2 distance <b>0.2901</b> in range-normalised coordinates, with <b>zero</b> points inside the ball. So the in-model cell has no <em>misspecification</em> — the true dynamics are the ones the pricer assumes — but the parameter point is <em>held out</em>, and the network must generalise its Greek fields there. The two conditions are distinct and should not be merged in the write-up: the effect is about generalising derivatives to unseen parameters, not about coping with wrong dynamics.</p>
+    </div>
+    <p>Recommended reporting: execute the registered rule verbatim, print its literal output (<code>channel_i</code>), then immediately show the in-model cell demonstrating the dichotomy was not exhaustive. Two registration-design lessons, both owned explicitly.</p>
+    <div class="note">
+      <h3>Why costs invert it</h3>
+      <p class="small">The unsupervised baseline's delta surface is too flat, so it trades <b>38% less than the oracle</b> (turnover 0.0248 vs 0.0398; excess turnover −0.696 against rung3's −0.007). Under proportional costs that under-trading collects a discount nobody chose — an accidental no-trade band. At 2% cost even the exact oracle loses to it by 20%, which is Whalley–Wilmott behaving exactly as theory predicts, not a defect.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">07</div><div><h2>What is unambiguously strong</h2></div></div>
+  <div class="stack">
+    <h3>Out-of-distribution Greek accuracy</h3>
+    <div class="note warn measure" style="margin-bottom:12px">
+      <h3>These are full-grid numbers. State the region.</h3>
+      <p class="small">The table below is evaluated on the full OOD grid (S &#8712; [50,150], K &#8712; [60,140], &#964; &#8712; [0.04,1.0]). Inside the box the hedge actually visits, the arms rank <em>oppositely</em> on &#916; (&#167;14). The accuracy claim survives &#8212; the supervised arms win in <b>both</b> regions &#8212; but the baseline&#8217;s apparent competence does not, and the paper must print the region beside the number.</p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>OOD Γ RMSE</th><th class="num">standard PINN</th><th class="num">rung1</th><th class="num">rung2</th><th class="num">rung3</th></tr></thead>
+        <tbody>
+          <tr><td>near_feller</td><td class="num">0.00782</td><td class="num">0.00256</td><td class="num">0.00102</td><td class="num">0.00083</td></tr>
+          <tr><td>strong_neg_corr</td><td class="num">0.00604</td><td class="num">0.00158</td><td class="num">0.00064</td><td class="num">0.00082</td></tr>
+        </tbody>
+        <caption>Γ reduction 86–89%, ν reduction 93% — the ≥15% bar is cleared many times over. The criterion nonetheless returns <b>fail</b>, on the price-parity clause only: price accuracy improved by 82–91%, so parity fails <em>by improving</em>. Whether that clause is two-sided as written or one-sided in intent — it exists to stop Greek accuracy being bought with price accuracy — remains an open reading.</caption>
+      </table>
+    </div>
+
+    <h3 style="margin-top:12px">Falsification controls — all three behave correctly</h3>
+    <div class="why">
+      <span class="lab">What these three test</span>
+      <p>Each replaces true Γ labels with something that <em>resembles</em> Γ supervision but carries no correct curvature information: permuted labels, the wrong model's Γ, and a smoothness penalty with no labels at all. If any of them reproduced the effect, the gain would not be about Γ.</p>
+      <p class="obj"><b>Objection targeted:</b> “your second-order loss is just a regulariser — any curvature penalty would smooth the delta surface and give the same result.”</p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Control</th><th>What it tests</th><th class="num">OOD Γ vs rung1</th></tr></thead>
+        <tbody>
+          <tr><td><code>shuffled</code></td><td>Γ labels permuted across points</td><td class="num">−246% / −370%</td></tr>
+          <tr><td><code>bs_gamma</code></td><td>the <em>wrong model's</em> Γ</td><td class="num">−36% / −65%</td></tr>
+          <tr><td><code>gradient_penalty_only</code></td><td>smoothness with zero label information</td><td class="num">−611% / −903%</td></tr>
+        </tbody>
+        <caption>Nothing that resembles Γ supervision without being <em>true</em> Γ supervision reproduces the effect. A Γ-shaped loss with permuted targets is worse than no Γ at all. This is the hardest version of the claim and it holds.</caption>
+      </table>
+    </div>
+
+    <h3 style="margin-top:12px">Sakuma's null, tested as he states it</h3>
+    <div class="why">
+      <span class="lab">What this checks</span>
+      <p>Sakuma reports that a trained network's delta hedge is distributionally indistinguishable from the true delta hedge (his Table 5). If that held universally it would be a power warning: the experiment could not detect any difference between hedgers, and no supervision result would be measurable.</p>
+      <p class="obj"><b>Objection targeted:</b> “Sakuma already showed learned and true delta hedges are the same, so there is nothing here to measure.”</p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Arm vs <b>oracle</b>, in-model, TC = 0</th><th class="num">relative gap</th><th>Verdict (tol 2%)</th></tr></thead>
+        <tbody>
+          <tr><td>rung 3</td><td class="num">+0.35%</td><td><span class="tag t-pass">consistent</span></td></tr>
+          <tr><td>rung 2</td><td class="num">+0.16%</td><td><span class="tag t-pass">consistent</span></td></tr>
+          <tr><td>rung 1</td><td class="num">−1.74%</td><td><span class="tag t-pass">consistent</span></td></tr>
+          <tr class="hl"><td>standard PINN</td><td class="num">−36.9%</td><td><span class="tag t-flag">flag</span></td></tr>
+        </tbody>
+        <caption>Sakuma's Table 5 claim is “true Δ ≈ model Δ”. The registered check compares rung3 against the standard PINN — two networks, a different proposition — which is why it flags. Tested as stated, the null is <b>reproduced by every supervised arm and fails only for the price-only baseline</b>: it is a property of derivative-supervised networks, not of pricing networks generally. That sharpens Sakuma rather than merely confirming him.</caption>
+      </table>
+    </div>
+    <p class="measure small muted">Honest caveat: every “consistent” verdict comes from the tolerance branch, not the CI branch — with 10,000 paths × 10 seeds the intervals exclude zero everywhere. The gaps are statistically detectable but economically negligible against the pre-registered 2% band, and should be described that way.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">08</div><div><h2>Cross-model transfer: Bates and Merton</h2></div></div>
+  <div class="stack">
+    <p class="lede measure">The effect decays monotonically with jump severity and dies once the data-generating process is far enough from Heston.</p>
+    <div class="why">
+      <span class="lab">What the Bates sweep is for</span>
+      <p>It hedges under a jump-diffusion process the network was never trained on, dialling jump intensity λ<sub>j</sub> and jump size σ<sub>j</sub> upward to move the true dynamics progressively further from the Heston model class. λ<sub>j</sub> = 0 must recover the Heston result, which it does.</p>
+      <p class="obj"><b>Objection targeted:</b> “your misspecification is a small parameter tweak inside the same model — show what happens when the world is genuinely a different process.” It also, unexpectedly, falsifies the robustness framing: the registered hypothesis predicts the benefit should <em>grow</em> with misspecification, and it shrinks.</p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th class="num">λ<sub>j</sub></th><th class="num">σ<sub>j</sub></th><th class="num">oracle</th><th class="num">standard PINN</th><th class="num">rung 3</th><th class="num">rung3 vs std</th></tr></thead>
+        <tbody>
+          <tr><td class="num">0.00</td><td class="num">0.05</td><td class="num">1.741</td><td class="num">2.401</td><td class="num">1.737</td><td class="num">+27.65%</td></tr>
+          <tr><td class="num">0.10</td><td class="num">0.05</td><td class="num">2.103</td><td class="num">2.635</td><td class="num">2.096</td><td class="num">+20.46%</td></tr>
+          <tr><td class="num">0.10</td><td class="num">0.15</td><td class="num">2.706</td><td class="num">3.199</td><td class="num">2.699</td><td class="num">+15.62%</td></tr>
+          <tr><td class="num">0.25</td><td class="num">0.05</td><td class="num">2.732</td><td class="num">3.044</td><td class="num">2.723</td><td class="num">+10.55%</td></tr>
+          <tr><td class="num">0.25</td><td class="num">0.15</td><td class="num">4.394</td><td class="num">4.610</td><td class="num">4.384</td><td class="num">+4.90%</td></tr>
+          <tr><td class="num">0.50</td><td class="num">0.10</td><td class="num">5.071</td><td class="num">4.910</td><td class="num">5.057</td><td class="num">−3.00%</td></tr>
+          <tr><td class="num">0.50</td><td class="num">0.15</td><td class="num">6.883</td><td class="num">6.592</td><td class="num">6.870</td><td class="num">−4.21%</td></tr>
+        </tbody>
+        <caption>Bates severity sweep at <b>TC = 0</b>, 5 seeds. λ<sub>j</sub> = 0 is the Heston-recovery cell and matches the confirmatory result. As jumps grow, model bias dominates and Greek accuracy stops mattering — every Heston-based hedger, oracle included, is wrong the same way.</caption>
+      </table>
+    </div>
+    <div class="note warn measure">
+      <h3>The registered Bates verdict inherits the tier problem</h3>
+      <p class="small"><code>goldilocks_bates</code> returned <code>no_decisive_regime</code> because it is evaluated at <b>tc = 0.01</b>. At TC = 0 a decisive regime plainly exists and decays in an interpretable way. Fourth place the 1% tier turns an informative measurement into a null.</p>
+    </div>
+    <p class="measure small">Merton at TC = 0: all three supervised arms edge past the oracle — rung1 2.909, rung2 2.917, rung3 2.925, against oracle 2.941 and baseline 3.242. Under a jump DGP the Heston oracle is not the optimal hedger, so a slightly different delta can beat it. The margin is ~1% on 5 seeds: worth a sentence, not a claim.</p>
+    <p class="measure small muted">Caveat carried into any table built from these cells: at λ<sub>j</sub> = 0.5 the baseline-to-oracle gap goes negative or near zero, so “fraction of gap closed” has an unstable denominator there and is not reported.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">09</div><div><h2>Perturbation directions, and the tuned policy comparison</h2></div></div>
+  <div class="stack">
+    <p class="lede measure">Two robustness checks completed after the first draft of this brief. Neither changes any conclusion; one strengthens the scope condition materially.</p>
+
+    <h3>All three misspecification directions agree</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Direction (magnitude 1.0)</th><th class="num">TC 0%</th><th class="num">TC 1%</th><th class="num">TC 2%</th></tr></thead>
+        <tbody>
+          <tr><td><code>xi_up</code> — vol-of-vol raised to 0.45</td><td class="num">+20.55%</td><td class="num">−5.79%</td><td class="num">−16.59%</td></tr>
+          <tr><td><code>rho_down</code> — correlation to −0.80</td><td class="num">+37.54%</td><td class="num">−3.90%</td><td class="num">−21.63%</td></tr>
+          <tr><td><code>combined</code> — both, the confirmatory direction</td><td class="num">+31.96%</td><td class="num">+0.12%</td><td class="num">−19.40%</td></tr>
+        </tbody>
+        <caption>rung3 vs standard PINN, 5 seeds. Same sign, comparable magnitude, same crossover in every direction — the confirmatory <code>combined</code> direction is representative rather than favourable.</caption>
+      </table>
+    </div>
+
+    <h3 style="margin-top:14px">The no-trade band, properly tuned</h3>
+    <div class="why">
+      <span class="lab">What the band arm is for</span>
+      <p>It bolts a classical Whalley–Wilmott no-trade band onto the <em>unsupervised</em> baseline's delta: do not rebalance unless delta has moved more than <em>w</em>. It is a cheap policy rule carrying no Greek information at all.</p>
+      <p class="obj"><b>Objection targeted:</b> “supervision just produces smoother deltas, and smoother deltas trade less — a trivial trading rule on the baseline would buy you the same thing.” The band width must itself be tuned, or the control is a strawman and the comparison proves nothing.</p>
+    </div>
+    <div class="scroll" style="margin-top:12px">
+      <table>
+        <thead><tr><th>TC</th><th class="num">band w=0.04</th><th class="num">band w=0.08</th><th class="num">rung 3</th><th class="num">standard PINN</th><th>Best</th></tr></thead>
+        <tbody>
+          <tr><td class="key">0.000%</td><td class="num">3.106</td><td class="num">3.276</td><td class="num">2.090</td><td class="num">3.052</td><td><span class="tag t-pass">rung3</span></td></tr>
+          <tr><td class="key">0.005%</td><td class="num">3.113</td><td class="num">3.282</td><td class="num">2.102</td><td class="num">3.061</td><td><span class="tag t-pass">rung3</span></td></tr>
+          <tr><td class="key">0.500%</td><td class="num">3.832</td><td class="num">3.894</td><td class="num">3.367</td><td class="num">3.940</td><td><span class="tag t-pass">rung3</span></td></tr>
+          <tr class="hl"><td class="key">1.000%</td><td class="num">4.591</td><td class="num">4.539</td><td class="num">4.859</td><td class="num">4.860</td><td><span class="tag t-flag">band</span></td></tr>
+          <tr class="hl"><td class="key">2.000%</td><td class="num">6.297</td><td class="num">5.975</td><td class="num">8.219</td><td class="num">6.899</td><td><span class="tag t-flag">band</span></td></tr>
+        </tbody>
+        <caption>The pre-registered grid {0.005, 0.01, 0.02, 0.04} selected 0.04 — its own <em>boundary</em>, with CVaR still falling, so the control was under-tuned. An extended grid finds a genuine interior optimum at 0.08 (0.04 and 0.16 both worse). Post-hoc and reported as exploratory; the selection criterion is untouched. Every non-smoothed arm is bit-identical to the previous run.</caption>
+      </table>
+    </div>
+    <p class="measure">Below the frontier estimation quality wins and the policy rule loses; above it the ordering reverses. The tuned band is <em>worse</em> at low cost (3.276 against 3.106) and better at high cost — a wider band buys cost savings with tracking error, a good trade only once costs are large. The frontier is therefore a statement about which constraint binds, not about whether supervision works.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">10</div><div><h2>Loose ends</h2></div></div>
+  <div class="stack measure">
+    <p><b>Everything registered has now been collected and analysed.</b> Nothing is running: 85 training runs, 100 sweep cells, three confirmatory passes, band selection and re-run, Greek evaluation, the saturation sweep, the verdict tables, the ledger, and the exhibits.</p>
+    <p><b>Still open in the registration:</b> whether the price-parity clause is two-sided as written or one-sided in intent; and the residual × supervision factorial, which is populated on three of four cells because no arm is price-only × PDE-ablated — <code>feedforward</code> ablates boundary conditions as well, so using it there would introduce a confound.</p>
+    <p><b>Known limitation.</b> The information-matched baseline cannot be run at its intended budget: the saturation cap is 5N = 20,480 price points while the frozen artifact holds 23,623 rows, which the standard PINN already consumes. What the sweep does establish is that price-only Γ accuracy plateaus by m = 2 (0.0076 across a 2.5× data increase) and gets <em>worse</em> at 2× width — so the optimization-limited objection dies. The strongest available price-only comparator is the standard PINN itself.</p>
+    <div class="note warn">
+      <h3>One contract self-inconsistency worth knowing</h3>
+      <p class="small"><code>headline_scale_free</code> — “fraction of the baseline-to-oracle gap closed” — is <b>undefined at the registered confirmatory tier</b>, because at 1% cost the oracle is worse than the baseline and the denominator goes negative. At zero cost it is clean and monotone: rung1 90.8%, rung2 97.2%, rung3 98.9%. The contract's own headline metric cannot be computed at the contract's own confirmatory cell — the tier problem showing up in a third place.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">11</div><div><h2>The headline depends on a hyperparameter sourcing choice</h2></div></div>
+  <div class="stack">
+    <div class="note measure">
+      <h3>Subsumed by &#167;13, and not withdrawn</h3>
+      <p class="small">This section compares two points, &#955;<sub>PDE</sub> = 0.01 and 0. &#167;13 fills in the interval between them and finds the function monotone throughout, so the contrast below is the endpoint case of a continuum rather than a two-arm sensitivity. Its conclusion strengthens: the sourcing choice is not one discrete decision that happened to matter, it is a free parameter with no data-driven stopping point in the direction that flatters the study.</p>
+    </div>
+    <div class="why measure">
+      <span class="lab">What the robustness row is</span>
+      <p>A pre-registered commitment: report the confirmatory contrast <em>additionally</em> at the &#955;<sub>PDE</sub> that would have been selected on the treatment arm rather than the baseline. The contract declared it so the sourcing choice could &#8220;be shown to be immaterial to the headline result (or shown not to be)&#8221;. It was unmet until now.</p>
+      <p class="obj"><b>Objection targeted:</b> &#8220;you tuned a shared hyperparameter on the arm it flatters.&#8221;</p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>tc</th><th>registered &#955;<sub>PDE</sub> = 0.01</th><th>rung3-sourced &#955;<sub>PDE</sub> = 0.0</th></tr></thead>
+        <tbody>
+          <tr class="hl"><td class="key">0%</td><td class="num">&#8722;0.9624 [&#8722;0.9804, &#8722;0.9443]</td><td class="num">&#8722;0.0632 [&#8722;0.0672, &#8722;0.0588]</td></tr>
+          <tr><td class="key">0.005%</td><td class="num">&#8722;0.9595</td><td class="num">&#8722;0.0628</td></tr>
+          <tr><td class="key">0.5%</td><td class="num">&#8722;0.5738</td><td class="num">+0.0127 <span class="muted">reversed</span></td></tr>
+          <tr class="hl"><td class="key">1%</td><td class="num">&#8722;0.0011 <span class="muted">null</span></td><td class="num">+0.1461 <span class="muted">reversed</span></td></tr>
+          <tr><td class="key">2%</td><td class="num">+1.3193</td><td class="num">+0.4514</td></tr>
+        </tbody>
+        <caption>rung3 vs standard PINN, <b>10 seeds both sides</b>. Relative improvement at tc = 0: <b>+31.50% &#8594; +2.86%</b>. The cost frontier also moves, from ~1% to below 0.5%.</caption>
+      </table>
+    </div>
+    <div class="note bad measure">
+      <h3>The stated rationale is measurably backwards</h3>
+      <p class="small">The contract justified sourcing &#955;<sub>PDE</sub> from the baseline as &#8220;the conservative direction wrt the study&#8217;s hypothesis&#8221;. Measured, it is the <em>anti</em>-conservative direction: the residual handicaps the baseline, whose price surface is ~6&#215; worse than rung1&#8217;s, and the contrast against that handicapped baseline is <b>11&#215; larger</b> than against a competent one. This was declared before results, so it is a finding about the registration rather than a criticism of it.</p>
+      <p class="small" style="margin-top:8px">Two structural facts make it cheap to verify: &#955;<sub>PDE</sub> = 0 skips the second-order collocation term (40s retrains, not 15 min), and the resulting arms are <b>bit-identical on weights</b> to <code>feedforward</code> and <code>sobolev_sans_pde</code> &#8212; which also upgrades both to 10 seeds.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">12</div><div><h2>The oracle is not the ceiling</h2></div></div>
+  <div class="stack">
+    <div class="why measure">
+      <span class="lab">Why this was run</span>
+      <p>A wrong-model Black&#8211;Scholes gamma label (<code>bs_gamma</code>) hedged <em>better</em> than the exact-Greek oracle, which needed either an explanation or an honest &#8220;unexplained&#8221;. Under stochastic volatility the frictionless delta is not the variance-minimising hedge ratio: spot and variance are correlated, so the minimum-variance delta adds a term, &#916;<sub>MV</sub> = &#8706;C/&#8706;S + (&#961;&#958;/S)&#183;&#8706;C/&#8706;v.</p>
+      <p class="obj"><b>Objection targeted:</b> &#8220;your control beats your oracle &#8212; something is wrong with the setup.&#8221;</p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>misspecified, tc = 0</th><th class="num">CVaR95</th><th class="num">vs oracle</th></tr></thead>
+        <tbody>
+          <tr class="hl"><td><b>mv_oracle</b></td><td class="num">1.6696</td><td class="num">+19.79%</td></tr>
+          <tr><td>bs_gamma</td><td class="num">1.8281</td><td class="num">+12.18%</td></tr>
+          <tr><td>oracle <span class="muted">(frictionless &#916;)</span></td><td class="num">2.0816</td><td class="num">&#8212;</td></tr>
+          <tr><td>rung3</td><td class="num">2.0957</td><td class="num">&#8722;0.68%</td></tr>
+          <tr><td>standard PINN</td><td class="num">3.0803</td><td class="num">&#8722;47.98%</td></tr>
+        </tbody>
+        <caption>5 seeds. The anomaly is explained: <code>bs_gamma</code> approximates the MV delta by accident, a BS-gamma bias damping the hedge ratio in the same direction &#961; &lt; 0 does.</caption>
+      </table>
+    </div>
+    <div class="note warn measure">
+      <h3>&#8220;Fraction of the baseline-to-oracle gap closed&#8221; measures against a suboptimal reference</h3>
+      <p class="small">rung3 closes <b>98.59%</b> of the gap to the oracle &#8212; but only <b>69.80%</b> of the gap to the hedge that actually wins. The residual ~30% is unreachable by Greek accuracy, because the frictionless delta is the wrong hedge ratio under stochastic volatility, not an inaccurate one. The contract&#8217;s <code>headline_scale_free</code> presupposes the oracle is the ceiling.</p>
+      <p class="small" style="margin-top:8px">The citation for the minimum-variance / local-risk-minimisation family is <b>not in the verified record</b>; nothing here may be cited until it is obtained and read.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">13</div><div><h2>The headline is a readout of &#955;<sub>PDE</sub>. It is not identified.</h2></div></div>
+  <div class="stack">
+    <div class="why measure">
+      <span class="lab">What this sweep is and why it was run</span>
+      <p>&#167;11 showed the headline moved from +31.50% to +2.86% between two values of one shared hyperparameter. Two points do not tell you whether that is a cliff, a plateau edge, or a slope. Four new values were trained &#8212; 80 fits, 4 &#955; rungs &#215; 2 arms &#215; 10 seeds, protocol identical to the production grid in every other respect &#8212; to find out which.</p>
+      <p class="obj"><b>Objection targeted:</b> &#8220;fine, the number is sensitive to &#955;<sub>PDE</sub>; report a range and move on.&#8221; That is only available if the range has an interior optimum. It does not.</p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>&#955;<sub>PDE</sub></th><th class="num">standard PINN</th><th class="num">rung 3</th><th class="num">gap</th><th class="num">rel, seed-mean</th><th class="num">rel, pooled</th></tr></thead>
+        <tbody>
+          <tr><td class="key">0</td><td class="num">2.1370</td><td class="num">2.0758</td><td class="num">0.061</td><td class="num">+2.86%</td><td class="num">+2.95%</td></tr>
+          <tr class="hl"><td class="key">1e&#8722;4 <b>criterion optimum</b></td><td class="num">2.2434</td><td class="num">2.0779</td><td class="num">0.165</td><td class="num">+7.37%</td><td class="num">+7.41%</td></tr>
+          <tr><td class="key">3e&#8722;4</td><td class="num">2.3101</td><td class="num">2.0800</td><td class="num">0.230</td><td class="num">+9.96%</td><td class="num">+10.03%</td></tr>
+          <tr><td class="key">1e&#8722;3</td><td class="num">2.4587</td><td class="num">2.0810</td><td class="num">0.378</td><td class="num">+15.36%</td><td class="num">+15.36%</td></tr>
+          <tr><td class="key">3e&#8722;3</td><td class="num">2.6794</td><td class="num">2.0905</td><td class="num">0.589</td><td class="num">+21.98%</td><td class="num">+22.08%</td></tr>
+          <tr class="hl"><td class="key">1e&#8722;2 <b>registered</b></td><td class="num">3.0518</td><td class="num">2.0904</td><td class="num">0.961</td><td class="num">+31.50%</td><td class="num">+31.52%</td></tr>
+        </tbody>
+        <caption>CVaR<sub>95</sub> of loss, confirmatory cell, misspecified, tc = 0, 10 seeds. <b>Oracle at this cell: 2.0794.</b> Every rung is seed-robust as well as pooled-significant, so &#167;04b&#8217;s convention question does not arise here: the two conventions agree to &#8804;0.1pp at every rung.</caption>
+      </table>
+    </div>
+    <div class="note bad measure">
+      <h3>Only the baseline moves. The treatment arm is at the oracle at every rung.</h3>
+      <p class="small">rung 3 drifts 2.0758 &#8594; 2.0904, i.e. <b>0.7% across a 100&#215; change in &#955;<sub>PDE</sub></b>, and is pinned to the oracle&#8217;s 2.0794 throughout. <code>standard_pinn</code> degrades monotonically 2.1370 &#8594; 3.0518, <b>+43%</b>. The reported effect size is therefore not a measurement of what supervision achieves &#8212; that is constant, and already at the ceiling &#8212; but of <b>how much the PDE residual damages the unsupervised baseline</b>. There is no value of &#955;<sub>PDE</sub> at which the effect settles, so there is no principled way to quote a single figure. <b>&#8220;+31.5%&#8221; is not a quantity this study measured.</b></p>
+    </div>
+
+    <h3 style="margin-top:6px">The registered &#955;<sub>PDE</sub> is wrong by the contract&#8217;s own rule</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>&#955;<sub>PDE</sub></th><th class="num">selection score, seed 42</th><th class="num">mean over 10 seeds</th></tr></thead>
+        <tbody>
+          <tr><td class="key">0</td><td class="num">0.17565</td><td class="num">0.13090</td></tr>
+          <tr class="hl"><td class="key">1e&#8722;4</td><td class="num">0.08476</td><td class="num"><b>0.08200</b> &#8592; optimum</td></tr>
+          <tr class="hl"><td class="key">3e&#8722;4</td><td class="num"><b>0.08365</b></td><td class="num">0.08614</td></tr>
+          <tr><td class="key">1e&#8722;3</td><td class="num">0.10356</td><td class="num">0.10385</td></tr>
+          <tr><td class="key">3e&#8722;3</td><td class="num">0.13005</td><td class="num">0.12817</td></tr>
+          <tr class="hl"><td class="key">1e&#8722;2 <b>registered</b></td><td class="num">0.16957</td><td class="num"><b>0.17733</b> &#8592; worst</td></tr>
+        </tbody>
+        <caption><code>train._val_greek_score</code> &#8212; mean normalised validation RMSE over price/&#916;/&#915;/&#957;, the contract&#8217;s own &#955; criterion, unmodified. The recomputation <b>reproduces the registered <code>scores_table_pde</code> exactly</b> at both overlapping points (0.17565 at &#955; = 0, 0.16957 at &#955; = 0.01, matching <code>lambdas_selected.yaml</code> to five decimals), so this is the same criterion, not a proxy for it.</caption>
+      </table>
+    </div>
+    <p class="measure">The registered value scores <b>more than twice</b> the optimum and is the worst of the six points. Stated precisely and no further: the optimum is <em>flat between 1e&#8722;4 and 3e&#8722;4</em> &#8212; seed 42 prefers 3e&#8722;4, the 10-seed mean prefers 1e&#8722;4 &#8212; so the minimiser is not sharply located and should not be quoted as a specific replacement value. What <em>is</em> sharp is that the registered point is far outside that basin.</p>
+    <p class="measure">This is a <b>grid-resolution failure, not a rule failure</b>. The rule works. It was evaluated at {0, 0.01, 0.1, 1.0}, four points that straddle a minimum two orders of magnitude below the smallest non-zero candidate, and it correctly returned the least-bad of what it was shown. It is the same pathology as the no-trade band grid: a search that selects at its own lower boundary has not finished.</p>
+
+    <h3 style="margin-top:6px">Replicated independently, to the last digit</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>&#955;<sub>PDE</sub></th><th class="num">Melvin&#8217;s pipeline</th><th class="num">audit pipeline</th><th class="num">|diff|</th></tr></thead>
+        <tbody>
+          <tr><td class="key">1e&#8722;4</td><td class="num">+7.3743%</td><td class="num">+7.3743%</td><td class="num">0.00e+00</td></tr>
+          <tr><td class="key">1e&#8722;3</td><td class="num">+15.3614%</td><td class="num">+15.3614%</td><td class="num">0.00e+00</td></tr>
+          <tr><td class="key">3e&#8722;3</td><td class="num">+21.9786%</td><td class="num">+21.9786%</td><td class="num">0.00e+00</td></tr>
+        </tbody>
+        <caption>Two independently written drivers (<code>lambda_pde_curve.sh</code> + <code>robustness_hedge.py</code> vs <code>lambda_sweep.py</code>), three overlapping rungs, bit-identical checkpoints at the seeds checked. Python 3.9 and 3.12 were separately verified to produce bit-identical training, so the local sweep is comparable to the dispatched production grid. <b>The finding is replicated, not asserted.</b></caption>
+      </table>
+    </div>
+
+    <h3 style="margin-top:6px">The full (&#955;<sub>PDE</sub> &#215; cost) surface</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>&#955;<sub>PDE</sub></th><th class="num">tc = 0</th><th class="num">5e&#8722;5</th><th class="num">0.25%</th><th class="num">0.5%</th><th class="num">1%</th><th class="num">2%</th></tr></thead>
+        <tbody>
+          <tr><td class="key">0</td><td class="num">+2.86%</td><td class="num">+2.83%</td><td class="num">+1.19%</td><td class="num">&#8722;0.45%</td><td class="num">&#8722;3.14%</td><td class="num">&#8722;5.86%</td></tr>
+          <tr class="hl"><td class="key">1e&#8722;4 <b>criterion optimum</b></td><td class="num">+7.37%</td><td class="num">+7.29%</td><td class="num">+3.28%</td><td class="num"><b>&#8722;0.30%</b></td><td class="num">&#8722;5.61%</td><td class="num">&#8722;9.43%</td></tr>
+          <tr><td class="key">3e&#8722;4</td><td class="num">+9.96%</td><td class="num">&#8212;</td><td class="num">&#8212;</td><td class="num">&#8212;</td><td class="num">&#8722;5.35%</td><td class="num">&#8722;10.18%</td></tr>
+          <tr><td class="key">1e&#8722;3</td><td class="num">+15.36%</td><td class="num">+15.23%</td><td class="num">+9.17%</td><td class="num">+3.63%</td><td class="num">&#8722;5.28%</td><td class="num">&#8722;13.44%</td></tr>
+          <tr><td class="key">3e&#8722;3</td><td class="num">+21.98%</td><td class="num">+21.82%</td><td class="num">+14.48%</td><td class="num">+7.69%</td><td class="num">&#8722;3.78%</td><td class="num">&#8722;16.26%</td></tr>
+          <tr class="hl"><td class="key">1e&#8722;2 <b>registered</b></td><td class="num">+31.50%</td><td class="num">+31.32%</td><td class="num">+22.70%</td><td class="num"><b>+14.54%</b></td><td class="num"><b>+0.01%</b></td><td class="num">&#8722;19.12%</td></tr>
+        </tbody>
+        <caption><code>results/lambda_sweep/headline_vs_lambda_pde_merged.csv</code>. Relative CVaR<sub>95</sub> improvement, rung 3 vs standard PINN, misspecified, 10 seeds, seed-mean convention. Dashes are cells not run at that rung.</caption>
+      </table>
+    </div>
+    <div class="note bad measure">
+      <h3>The registered configuration is the single most favourable point in the surface</h3>
+      <p class="small">At the registered 1% tier the contrast is <b>negative at every &#955;<sub>PDE</sub> except the registered one</b>, where it is +0.01%. Correcting &#955;<sub>PDE</sub> therefore does not rescue the confirmatory claim &#8212; it converts a null into a significant reversal (&#8722;5.6% at the criterion optimum). Read across and down, (0.01, 1%) is the most flattering cell in the entire explored grid.</p>
+      <p class="small" style="margin-top:8px">This is <b>not evidence of tuning</b>, and it must not be presented as such: &#955;<sub>PDE</sub> was fixed by a validation-blind rule before any hedging ran, and the cost tiers were registered before that. It is a coincidence, and a bad one to be discovered by a referee rather than disclosed by the authors. <b>State it in the paper.</b></p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">14</div><div><h2>The accuracy and hedging metrics are measured in disjoint regions where the arms rank oppositely</h2></div></div>
+  <div class="stack">
+    <div class="why measure">
+      <span class="lab">Why this was looked for</span>
+      <p>The results carry an apparent paradox the draft turned into a finding: the baseline is <em>respectable</em> on the OOD Greek table yet <em>catastrophic</em> at hedging. That was written up as &#8220;the two axes move independently&#8221;. Independence between two metrics computed from the same network is a strong claim, so it was checked by evaluating <b>the same metric with the same code</b> in the region each headline actually inhabits.</p>
+      <p class="obj"><b>Objection targeted:</b> &#8220;you are comparing a Greek error somewhere the hedge never goes with a P&amp;L somewhere you never measured the Greek.&#8221;</p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>&#916; RMSE, baseline anchor, seed 42</th><th class="num">standard PINN</th><th class="num">feedforward</th><th class="num">rung 1</th><th class="num">rung 3</th><th class="num">sans_pde</th></tr></thead>
+        <tbody>
+          <tr><td><b>FULL grid</b> &#8212; where the OOD Greek table lives<br><span class="small muted">S &#8712; [50,150], K &#8712; [60,140], &#964; &#8712; [0.04,1.0]</span></td><td class="num"><b>0.0414</b></td><td class="num">0.1040</td><td class="num">0.0091</td><td class="num">0.0028</td><td class="num">0.0125</td></tr>
+          <tr class="hl"><td><b>HEDGING slice</b> &#8212; where the P&amp;L headline lives<br><span class="small muted">K &#8776; 100, &#964; &#8712; [0.08,0.25], S &#8712; [65,125]</span></td><td class="num"><b>0.0706</b></td><td class="num">0.0269</td><td class="num">0.0084</td><td class="num">0.0021</td><td class="num">0.0030</td></tr>
+        </tbody>
+        <caption>Same metric, same consensus labels, same code path (<code>eval_greeks.py</code> and <code>PINNProvider.evaluate</code> both call <code>model.greeks_eval</code> &#8212; verified). The slice bounds are derived from the contract&#8217;s own <code>hedging_simulation</code> block, not chosen: <code>hedge_slice_spec()</code>, with a test that enforces the new slice cannot move a registered verdict.</caption>
+      </table>
+    </div>
+    <p class="measure">On the full grid the residual-only baseline is <b>2.5&#215; better</b> than a price-only net. In the hedging box it is <b>2.6&#215; worse</b>. <code>standard_pinn</code> is the <b>only arm that degrades</b> moving into the slice (0.0414 &#8594; 0.0706); every other arm improves there. The reversal holds in <b>all five seeds without exception</b>, and at the registered OOD anchors too &#8212; &#916; goes from 0.61&#215; to 2.29&#215; at <code>near_feller</code> and 0.52&#215; to 3.04&#215; at <code>strong_neg_corr</code>, with &#915; reversing as well. It is a property of the <em>region</em>, not of the anchor or the seed.</p>
+    <div class="note bad measure">
+      <h3>&#8220;The hedging and accuracy axes move independently&#8221; is withdrawn</h3>
+      <p class="small">Measured in a single region, accuracy <em>does</em> predict hedging. On the confirmatory paths themselves the arms order by &#916; RMSE exactly as their P&amp;L orders (rung 3 0.0038, rung 2 0.0057, sans_pde 0.0056, against oracle &#916; on the same states), and the departures that remain are the hedge-ratio / minimum-variance effect of &#167;12, which is a different and nameable thing. The independence was an artifact of the measurement design. <b>The accuracy claim itself survives</b> &#8212; the supervised arms win in both regions &#8212; but the interpretation built on top of it does not.</p>
+    </div>
+    <h3 style="margin-top:6px">Three contributing causes, all measured</h3>
+    <div class="grid2">
+      <div class="card"><h3>Selection is blind to the eval region</h3><p class="small">&#955;<sub>PDE</sub> is scored on hypercube validation &#215; full grid, where <code>standard_pinn</code> beats <code>feedforward</code> by 31% (0.0418 vs 0.0607). At hedge states the same pair reads 0.0989 vs 0.0484 &#8212; it <em>loses</em> by 104%. Anchors are excised from training <b>and</b> validation, so no selection signal ever sees the region the claim is evaluated in.</p></div>
+      <div class="card"><h3>The normaliser inflates the effective &#955; ~79&#215;</h3><p class="small"><code>loss_scale_pde = mean((r&#183;price)&#178;)</code> has rms 0.527, while the residual&#8217;s dominant term rms(&#189;vS&#178;&#915;) is 4.674 &#8212; a ratio of 8.9, squared. At the registered &#955; the PDE term is <b>49% of <code>standard_pinn</code>&#8217;s total loss</b>, and its in-sample price MSE is 28&#215; worse than <code>feedforward</code>&#8217;s (8.64e&#8722;5 vs 3.05e&#8722;6).</p></div>
+      <div class="card"><h3>Label coverage thins along the hedge&#8217;s life</h3><p class="small">64 (S, K, &#964;) triples are shared between the label grid and the hedge. The hedge <em>starts</em> on one of them (distance 0.011 at &#964; = 0.25) and walks away from all of them as &#964; falls, reaching 0.169 &#8212; with zero labels within 0.15 &#8212; by &#964; = 0.08.</p></div>
+      <div class="card"><h3>The consequence, directly measured</h3><p class="small"><code>standard_pinn</code>&#8217;s &#916; at hedge states is a <b>flattened sigmoid</b>: regression slope 0.637 on the oracle &#916;, biased +0.101 OTM, &#8722;0.029 ATM, &#8722;0.107 ITM. The &#8220;38% under-trading&#8221; of &#167;06 is this, and it is real and measured rather than inferred from turnover.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><div class="sec-n">15</div><div><h2>Claim status after the audit, and what an adjudicator should rule on</h2></div></div>
+  <div class="stack">
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Claim</th><th>Status</th><th>Basis</th></tr></thead>
+        <tbody>
+          <tr class="hl"><td>rung 3 attains oracle-level delta-only CVaR<sub>95</sub></td><td><span class="tag t-pass">survives</span></td><td class="small">2.076&#8211;2.090 vs oracle 2.079 at every &#955;<sub>PDE</sub> incl. 0; seed-robust; hyperparameter-independent (&#167;13)</td></tr>
+          <tr class="hl"><td>OOD Greek accuracy, &#915; 86&#8211;89% / &#957; 93%</td><td><span class="tag t-pass">survives</span></td><td class="small">on the full grid; must be printed beside the hedge-box slice, where the <em>baseline&#8217;s</em> ranking reverses (&#167;14)</td></tr>
+          <tr><td>Three falsification controls behave correctly</td><td><span class="tag t-pass">survives</span></td><td class="small">untouched by this audit (&#167;07)</td></tr>
+          <tr><td>Sakuma null reproduced by supervised arms only</td><td><span class="tag t-pass">survives</span></td><td class="small">untouched; tolerance-branch caveat still applies (&#167;07)</td></tr>
+          <tr><td>&#915;-supervision benefit is real but small (6.5% of the ladder)</td><td><span class="tag t-flag">conditional</span></td><td class="small">the ladder decomposition is itself measured at &#955; = 0.01; the shares have not been re-run across the sweep (&#167;05, open item 1)</td></tr>
+          <tr class="hl"><td>&#8220;+31.5% zero-cost hedging benefit&#8221;</td><td><span class="tag t-fail">not identified</span></td><td class="small">monotone readout of &#955;<sub>PDE</sub> over +2.9% to +31.5%, no interior optimum; +7.4% at the criterion optimum (&#167;13)</td></tr>
+          <tr class="hl"><td>&#8220;The effect clears 10% across A&amp;T&#8217;s calibrated range&#8221;</td><td><span class="tag t-fail">withdrawn</span></td><td class="small">&#8722;0.30% at their 0.5% stress tier at the criterion optimum (&#167;13, &#167;04)</td></tr>
+          <tr class="hl"><td>&#8220;Hedging and accuracy axes move independently&#8221;</td><td><span class="tag t-fail">withdrawn</span></td><td class="small">artifact of disjoint measurement regions (&#167;14)</td></tr>
+          <tr><td>Registered confirmatory verdict</td><td><span class="tag t-fail">fail</span></td><td class="small">unchanged, and fails harder at the corrected &#955;<sub>PDE</sub> (&#167;13)</td></tr>
+          <tr><td>&#8220;A bug inverted the predictions&#8221;</td><td><span class="tag t-null">not supported</span></td><td class="small">12 components re-derived against artifacts; no inverting defect found (&#167;01)</td></tr>
+        </tbody>
+        <caption>Verdict vocabulary follows <code>acceptance_thresholds.verdict_vocabulary</code>: <code>null</code> = not evaluated, <code>error</code> = evaluated and failed. &#8220;Withdrawn&#8221; and &#8220;not identified&#8221; are <em>this document&#8217;s</em> editorial statuses about claim text, not registered verdicts, and are labelled distinctly for that reason.</caption>
+      </table>
+    </div>
+
+    <div class="note bad measure">
+      <h3>Four sentences the manuscript must not contain</h3>
+      <ul class="small">
+        <li>Any unqualified &#8220;+31.5%&#8221; &#8212; the zero-cost effect may only appear as a function of &#955;<sub>PDE</sub> with the registered point marked.</li>
+        <li>&#8220;The effect survives across the realistic transaction-cost range.&#8221;</li>
+        <li>&#8220;The hedging and accuracy axes move independently.&#8221;</li>
+        <li>Any OOD Greek number without its evaluation region named in the same sentence or its caption.</li>
+      </ul>
+    </div>
+
+    <h3 style="margin-top:6px">Open items, ranked</h3>
+    <ol class="measure">
+      <li><b>Re-run the ladder decomposition across the sweep.</b> &#167;05&#8217;s &#8220;91.9% from +&#916;, 6.5% from +&#915;&#8221; is measured at &#955; = 0.01 only. If the whole gap is baseline damage, the shares are shares <em>of that damage</em>, and the &#915; rung&#8217;s contribution at the criterion optimum is unknown. Cheap: rung 1 and rung 2 at 1e&#8722;4, 10 seeds.</li>
+      <li><b>Re-emit the MV-delta aggregate CSVs with all five seeds.</b> <code>results/mv_delta*/confirmatory/headline_delta_only_agg.csv</code> reports <code>n_seeds = 1</code> though the banks hold five. &#167;12&#8217;s numbers were verified from the banks directly, but the CSV must not be cited as it stands.</li>
+      <li><b>Correct the stale &#8220;three of four cells&#8221; text</b> in &#167;10 here and &#167;4.2 of the claim memo &#8212; the factorial is complete, and <code>pinn_config</code> sets <code>use_bc: false</code> globally, so <code>feedforward</code> does not ablate boundary conditions.</li>
+      <li><b>Update <code>docs/PAPER_DISCLOSURES.md</code> &#167;A4(c)</b>, which still promises the &#955;<sub>PDE</sub> sweep rather than quoting &#167;13.</li>
+      <li><b>Rewrite <code>paper.tex</code> against this revision.</b> Its abstract quotes +31.5% unqualified; Figure 1 resolves to the 1% exhibit where the ladder is flat; the &#8220;98.9% of the gap to oracle&#8221; line contradicts the MV section (&#167;12: 69.80% of the gap to the hedge that actually wins).</li>
+      <li><b>Obtain and read the minimum-variance / local-risk-minimisation source</b> before &#167;12 is written up. It is described from the data, not cited, and must stay that way until read.</li>
+    </ol>
+
+    <div class="note measure">
+      <h3>The question this revision puts to the adjudicator</h3>
+      <p>The registered program returns a null, the headline effect is not identified, and the cost-tier route to a positive result is closed. What remains is a coherent and defensible pair of findings: <b>derivative supervision buys large, seed-robust out-of-distribution Greek accuracy, and it buys hedging performance only up to the oracle &#8212; which it reaches, and which is itself ~20% short of the minimum-variance hedge</b> (&#167;12). Alongside them sit three methodological findings that are arguably the more transferable contribution: a validation criterion anti-correlated with the primary metric, a selection grid that terminated at its own boundary, and two headline metrics evaluated in regions that do not overlap.</p>
+      <p style="margin-top:9px">The ruling needed is on <b>scope</b>, not on any individual number: is that a paper, or a workshop note plus a negative-results report? Both are honest. They are not the same submission.</p>
+    </div>
+  </div>
+</section>
+
+
+</div>
+</div>
+

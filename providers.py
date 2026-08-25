@@ -64,8 +64,19 @@ class HestonCFProvider:
     def evaluate(self, S: np.ndarray, v: np.ndarray, tau: float,
                  K: float) -> dict:
         """Exact theta_train Greeks at (S, max(v, v_floor), tau, K); output
-        arrays broadcast to S.shape. Deterministic: same inputs -> bit-equal
-        outputs (pure quadrature, no randomness)."""
+        arrays broadcast to S.shape.
+
+        REPRODUCIBILITY, precisely (measured 2026-08-20, docs/CODE_AUDIT_2026-08-20.md):
+        there is no randomness here — the quadrature is a pure function of its inputs —
+        but repeated identical calls are reproducible only to ABOUT ONE ULP, not
+        bitwise: on real path states max |delta - delta| across repeat calls is
+        ~1.8e-15, and the wobble persists with the BLAS thread count pinned to 1. It is
+        floating-point reduction order inside the vectorised CF evaluation, not state
+        carried between calls. Nothing downstream is affected at 1e-15 (thirteen orders
+        below any reported effect), but a test that asserts `array_equal` on this
+        output WILL flake; assert `assert_allclose(..., rtol=0, atol=1e-12)` instead.
+        The earlier docstring claimed bit-equal outputs and that claim was wrong.
+        """
         S, v = np.broadcast_arrays(np.asarray(S, float), np.asarray(v, float))
         shape = S.shape
         Sf = S.ravel()

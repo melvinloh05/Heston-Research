@@ -1,0 +1,1417 @@
+% =============================================================================
+% Learned Derivatives Off-Distribution: What Supervision Buys, and Why the
+% Standard Metric Hides It
+% NeurIPS 2026 workshop submission (ANONYMOUS), official neurips_2026 style.
+%
+% BEFORE COMPILING: neurips_2026.sty must sit next to this file (get it from
+% https://neurips.cc). Nothing in that style file may be modified -- tweaking it
+% is grounds for desk rejection.
+%
+% TWO THINGS TO SET BEFORE SUBMITTING:
+%   1. the workshop's review model. This file assumes DOUBLE-BLIND
+%      (dblblindworkshop). If the workshop is single-blind, swap the option to
+%      sglblindworkshop and uncomment the author block.
+%   2. \workshoptitle{} below -- the workshop template requires BOTH \title and
+%      \workshoptitle, the latter appearing in the title footnote.
+%
+% PAGE LIMIT: the body is what counts. Acknowledgments, references, the
+% checklist, and technical appendices do not count as content pages.
+%
+% SINGLE SOURCE OF TRUTH FOR DESIGN: heston_benchmark_v6.yaml @ benchmark-v6-frozen.
+% SINGLE SOURCE OF TRUTH FOR RESULTS: results/analysis/registration_ledger.md,
+%   results/analysis/results/tables/{threshold_verdicts,convention_audit,
+%   dose_response}.csv, results/hedging*/, results/lambda_sweep/,
+%   results/eval_greeks_*/, results/mv_delta_full/, results/mv_supervised/,
+%   results/gate*/, results/info_matching/.
+% RULINGS THAT GOVERN CLAIM TEXT: docs/ADJUDICATION_2026-08-18.md (incl. sec. 9),
+%   docs/CODE_AUDIT_2026-08-20.md, docs/PAPER_DISCLOSURES.md.
+%
+% Sentences this paper MUST NOT contain:
+%   1. "Explicit Gamma supervision improves delta-only hedging PnL under
+%      misspecified dynamics."
+%   2. "The improvement operates through the model-uncertainty-robustness
+%      channel" (or the transaction-cost variant).
+%   3. "The confirmatory test would have passed at a correctly calibrated
+%      transaction-cost tier" (any phrasing re-scoring the registered fail).
+%   4. "The hedging and accuracy axes move independently" (artifact of disjoint
+%      measurement regions; they agree when measured in one region).
+%   5. "The value-only network cannot build the minimum-variance controller"
+%      (measured false: it recovers 86% of the gain; it falls short by 3.4%).
+% Numbers that must never be quoted unqualified: "+31.5%" as the effect size;
+% "closes 98.6% of the gap" (wrong denominator, see the MV comparator); the
+% 91.9/6.5/1.7 ladder shares (shares of the damage at a dead lambda_pde); the
+% 0.575% cost tier (reverse-engineered, appears nowhere).
+% =============================================================================
+
+\documentclass{article}
+
+% Workshop track, double-blind reviewing. Alternatives, one only:
+%   \usepackage[sglblindworkshop]{neurips_2026}   % single-blind workshop
+%   \usepackage[dblblindworkshop, final]{neurips_2026}  % camera-ready, after acceptance
+%   \usepackage[preprint]{neurips_2026}           % arXiv preprint
+\usepackage[dblblindworkshop]{neurips_2026}
+
+\usepackage[utf8]{inputenc}   % allow utf-8 input
+\usepackage[T1]{fontenc}      % use 8-bit T1 fonts
+\usepackage{hyperref}         % hyperlinks
+\usepackage{url}              % simple URL typesetting
+\usepackage{booktabs}         % professional-quality tables
+\usepackage{amsfonts}         % blackboard math symbols
+\usepackage{nicefrac}         % compact symbols for 1/2, etc.
+\usepackage{microtype}        % microtypography
+\usepackage{xcolor}           % colors
+
+% Added beyond the shell: math, graphics, and the verbatim block that reproduces
+% the frozen pre-registration in Appendix A. No style-file parameter is touched.
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{listings}
+\graphicspath{{figures/}}
+
+% Double-blind hygiene: \author is filled in below for the camera-ready, and the
+% style file suppresses it on the page, but hyperref would otherwise copy the
+% names into the PDF metadata. Delete this line when compiling with "final".
+\hypersetup{pdfauthor={}, pdfsubject={}, pdfkeywords={}}
+
+% The Appendix A listing reproduces the contract byte-for-byte and is pure ASCII;
+% these mappings are a guard in case a future edit reintroduces a non-ASCII
+% character into quoted text, which listings cannot set under inputenc.
+\lstset{extendedchars=true, inputencoding=utf8,
+        literate={—}{{---}}1 {–}{{--}}1 {→}{{$\rightarrow$}}1
+                 {≤}{{$\leq$}}1 {≥}{{$\geq$}}1 {×}{{$\times$}}1}
+
+\title{Learned Derivatives Off-Distribution: What Supervision Buys,\\
+and Why the Standard Metric Hides It}
+
+% REQUIRED for the workshop template, alongside \title:
+\workshoptitle{WORKSHOP TITLE}
+
+% -----------------------------------------------------------------------------
+% ANONYMOUS SUBMISSION: under dblblindworkshop the style file suppresses the
+% author block automatically, so this is the camera-ready content and needs no
+% edit before submission. Uncomment only for a single-blind workshop or after
+% acceptance with the "final" option.
+% -----------------------------------------------------------------------------
+\author{%
+  Melvin Loh \\
+  Nanyang Technological University \\
+  \texttt{mloh018@e.ntu.edu.sg} \\
+  \And
+  Prathamesh Dinesh Joshi \\
+  Vizuara AI Labs \\
+  \texttt{prathamesh@vizuara.com} \\
+  \And
+  Raj Dandekar \\
+  Vizuara AI Labs \\
+  \texttt{raj@vizuara.com} \\
+}
+
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Neural surrogates for parametric differential equations return their derivatives for
+free by automatic differentiation, and downstream procedures increasingly consume
+those derivatives to make decisions. We pre-registered a test of whether supervising
+them improves such a decision, and it failed: at the confirmatory cell the
+improvement is $+0.02\%$ against a $10\%$ bar with a $95\%$ interval covering zero,
+and the rung carrying the registered causal claim reverses. Every registered
+efficacy endpoint failed; the scorecard's consistency check and mechanism
+adjudication returned as designed. The same design then identifies why, and the
+answer is that the registered scorecard mis-attributes on three axes. Location:
+accuracy is scored on a parameter grid while the decision consumes it on a
+trajectory, and the two can rank arms oppositely; weighting the error by the
+occupancy measure the controller induces predicts realised cost better than either
+($\rho = 0.71$ against $0.47$ on the grid, for second derivatives). Direction: a
+systematically biased label yields the best learned controller in the study.
+Policy: $96.7\%$ of the surviving gap to the best available controller is control
+design rather than approximation. Alongside these, supervision cuts held-out
+second-derivative relative RMSE from $0.410$ to $0.045$ where three controls
+carrying no curvature information fail, and holds reference-level decision cost
+across a hundredfold range of a training weight that moves the unsupervised baseline
+by $43\%$ while forming the largest single term in its own objective.
+\end{abstract}
+
+% =============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+A neural surrogate for a parametric differential equation is trained to match a
+value, but automatic differentiation returns its derivatives in the same forward
+pass, and those derivatives are increasingly the product rather than a diagnostic.
+Sensitivities drive design optimisation, control, and risk decisions, and they are
+consumed at parameters and states chosen by the downstream procedure rather than by
+whoever trained the surrogate. Standard training nevertheless controls only the
+value in $L^{2}$, which permits a network to fit values closely while the slope and
+curvature of the fitted field remain biased. Supervising the derivatives directly is
+established practice, as Sobolev training \citep{czarnecki2017sobolev} and, in the
+financial instance, as differential machine learning
+\citep{huge2020differential}. What is not established is whether the resulting
+derivative fields survive off-distribution, and whether the accuracy that papers
+report predicts the quality of the decision the derivatives are used for.
+
+Both ends of the relevant literature name the gap without closing it.
+\citet{noguer2026derivative} proves that the error of a discretely rebalanced
+decision driven by a surrogate is governed at leading order by the surrogate's
+second derivative and shows that supervising the first does not reliably control the
+second, but reports no decision experiment and uses a fixed-feature ridge surrogate
+for its stochastic-volatility case. From the residual end,
+\citet{chakhoyan2025deepsvm} report that a physics-informed operator network attains
+low residual loss on this same parametric problem while producing oscillatory first
+derivatives and locally negative second derivatives, finds a soft positivity penalty
+insufficient, and names explicit derivative regularisation as the necessary
+direction. The nearest trained configuration \citep{sakuma2026a} supervises the
+first and second derivatives alongside a residual, but evaluates its decision under
+the same dynamics used for training and with no costs charged, obtaining nearly
+indistinguishable outcomes across arms. Whether derivative supervision changes the
+decision under misspecified dynamics, and through which mechanism, has not been
+tested.
+
+This paper reports that test, and its pre-registered confirmatory contrast fails;
+the failure is stated first and unhedged in Section~\ref{sec:reg}. What the design
+does establish is separable from it, and is stated as arm levels rather than as
+differences. Supervising the derivatives makes the held-out fields far more
+accurate, and the gain is attributable to the information in the labels: three
+controls that resemble derivative supervision while carrying no correct second-order
+information fail to reproduce it, and a curvature penalty with no labels is worse
+than adding nothing. On the decision, the supervised surrogate attains the reference controller's own
+cost and holds it across a hundredfold range of the weight on the residual term, a
+hyperparameter with no principled setting, while that range moves the unsupervised
+baseline by $43\%$. The obvious objection, that a network trained on reference
+derivatives should be expected to match reference decisions, is answered by where
+the evaluation happens: the evaluated regimes are excised from training \emph{and}
+validation, one lies outside the sampled range entirely, and the decision trajectory
+leaves the labelled region as it runs (Figure~\ref{fig:coverage}a). The arms without
+labels fail at exactly those points, so ``it was trained on the answer'' does not
+survive contact with the controls.
+
+Two findings about measurement sit alongside, and they are why the registered
+scorecard reads as it does. First, the standard way of reporting derivative accuracy
+scores it on a parameter grid, while the decision consumes derivatives on a
+trajectory occupying a small and different part of the domain; restricted to that
+region the identical metric reverses the ranking of two arms, in every seed and at
+both held-out regimes. Second, the reference the decision is scored against is not
+the best available controller: a variance-minimising combination of the surrogate's
+own two first derivatives beats it, and the supervised arms reconstruct that
+combination to within the pre-registered economic floor while a value-only network
+does not. Neither finding depends on anything specific to option pricing, and we conjecture
+that both recur wherever a surrogate's derivatives are scored on a grid and spent on
+a trajectory; we have tested that in one setting, so this is an instrumented
+existence proof with a mechanism and a protocol rather than a claim about surrogates
+in general.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\linewidth]{f6_coverage_region.png}
+\caption{The measurement problem, in the study's own data. (a) The labelled training
+points in the contract coordinates, the region the decision trajectory occupies, and
+the trajectory bundle itself: the decision runs where there are no labels at the
+contract it trades, so matching the reference there is generalisation rather than
+recall. (b) Held-out first-derivative RMSE for the two arms that see no derivative
+label, scored on the full parameter grid as the standard metric is reported and then
+scored on the region the decision visits. The ranking reverses, at both held-out
+regimes and in every seed (Section~\ref{sec:region}).}
+\label{fig:coverage}
+\end{figure}
+
+% =============================================================================
+\section{Methodology}
+\label{sec:method}
+
+The object of study is a neural surrogate for the solution of a parametric partial
+differential equation, and the quantities of interest are its derivatives. We use
+option pricing under the Heston model \citep{heston1993closed} as the instance,
+because it supplies what such a study requires: a semi-analytic reference for the
+solution and for every derivative of it, a parameter space over which held-out
+generalisation is well defined, and a downstream decision with a scalar cost.
+Table~\ref{tab:notation} in Appendix~\ref{app:config} translates the notation
+once; the reader who prefers the differential-equation reading can substitute
+throughout.
+
+The solution $C(S, v, \tau)$ solves
+\begin{equation}\label{eq:hestonpde}
+\partial_\tau C=\tfrac12 vS^{2}\partial_{SS}C+\rho\xi vS\,\partial_{Sv}C
++\tfrac12\xi^{2}v\,\partial_{vv}C+(r-q)S\,\partial_{S}C
++\kappa(\theta-v)\,\partial_{v}C-rC,
+\end{equation}
+with the non-smooth initial condition $C(S,v,0)=(S-K)^{+}$. A single surrogate
+$C_\phi(S,K,\tau;\vartheta)$ takes all eight inputs, so the coefficients
+$\vartheta=(\kappa,\theta,\xi,\rho,v_0)$ are inputs rather than fixed and held-out
+generalisation is a statement about unseen coefficients. Of these, $v_0$ is not a
+coefficient but the \emph{current} variance, i.e.\ the state $v$ that the
+$\partial_v$ derivatives of \eqref{eq:hestonpde} act on; during hedging that slot is
+fed the pathwise $v_t$. Automatic differentiation
+gives $\Delta=\partial_S C_\phi$, the first derivative in the state the decision
+acts on, $\Gamma=\partial_{SS}C_\phi$ its curvature, and $\nu=\partial_{v_0}C_\phi$
+the derivative in the second state, while the squared residual of
+\eqref{eq:hestonpde} at collocation points gives the physics-informed loss
+$\mathcal{L}_{\mathrm{pde}}$ \citep{raissi2019physics}. Every arm is a flag setting
+of one objective,
+\begin{equation}\label{eq:loss}
+\mathcal{L}=\mathcal{L}_{\mathrm{price}}
++\lambda_{\mathrm{pde}}\mathcal{L}_{\mathrm{pde}}
++\lambda_{D}\mathcal{L}_{D}+\lambda_{G}\mathcal{L}_{G}
++\lambda_{\nu}\mathcal{L}_{\nu},
+\end{equation}
+where $\mathcal{L}_{D},\mathcal{L}_{G},\mathcal{L}_{\nu}$ are scale-normalised
+mean-squared errors against oracle labels, the second-derivative scale frozen once so
+that every arm shares it. The arms form a supervision ladder under one architecture, sampler, compute budget
+and terminal treatment: value only, value plus residual (the unsupervised baseline),
+then $+\Delta$, $+\Delta{+}\Gamma$, $+\Delta{+}\Gamma{+}\nu$, a residual-free
+supervised arm, and the controls of Section~\ref{sec:delivers}. Five seeds per arm,
+ten at the confirmatory pair and on every rung of the residual-weight sweep;
+Table~\ref{tab:arms} gives the grid. The unsupervised baseline follows the physics-informed formulation of
+\citet{hainaut2024option} and is called the residual-only arm below, since the
+residual is its only source of derivative information. Its degradation in
+Section~\ref{sec:readout} is a property of our normalisation of that residual and of
+our weight-selection grid, not of the formulation as published, so we label the arm
+by its configuration rather than by its source throughout. Terminal treatment is held identical because hard-constrained constructions
+\citep{lagaris1998artificial} embed the non-smooth initial condition into every
+derivative field, and any asymmetry there would confound the comparison.
+
+
+
+Reference values for the solution and for each of its derivatives come from a
+numerical oracle: four independently implemented solvers cross-validated to
+$10^{-3}$ relative agreement, with points where they disagree above tolerance masked
+under a rule declared before training and checked for neutrality across arms. Two of
+the four share machinery and are not independent witnesses, which bounds what the
+cross-validation certifies; the construction, the leg-by-leg diagnosis of a bias
+found in one solver, and the mask panels are in Appendix~\ref{app:oracle}, and
+Appendix~\ref{app:config} carries the frozen configuration in full. Every accuracy
+statement below is relative to that reference.
+
+Two scope conditions bound every claim. All five named evaluation regimes are
+excised from training \emph{and} validation by relative-radius balls ($10\%$ of the unit-cube diagonal), so the
+well-specified cell tests generalisation to unseen coefficients rather than the
+easier task of coping with correct dynamics, and the second held-out regime lies
+beyond the sampled range entirely. And the training labels are $512$ coefficient
+draws crossed with $64$ shared $(S,K,\tau)$ triples, none inside the region the
+decision occupies: the trajectory starts $0.011$ from the nearest labelled point in
+range-normalised coordinates and ends $0.169$ away
+(Figure~\ref{fig:coverage}a), so the decision is evaluated under extrapolation in
+the contract coordinates as well as the coefficients. Residual collocation is
+redrawn over the full domain each epoch and is exempt from the second condition.
+
+Two kinds of held-out evaluation appear below. In the well-specified cells the
+generating coefficients are those the surrogate is conditioned on and the test is
+generalisation to coefficients excised from training; in the misspecified cells the
+trajectories come from perturbed or jump-augmented dynamics while the surrogate
+stays conditioned on the training coefficients, which is misspecification proper. At
+decision time every arm receives the state and the training coefficients, never the
+true ones, and the reference controller is exact for the training coefficients only,
+so in the misspecified cells all of them are wrong about the world and differ only
+in how well they represent the assumed model.
+
+The downstream decision is a discrete sequential control problem, held fixed across
+arms so that derivative quality is the only varying factor. A controller holding
+$\hat{\Delta}$ units of the state rebalances at each of $43$ steps to a horizon
+$T' = 0.17$ and settles against the true dynamics; the loss is the negative of the
+resulting profit and the reported statistic is $\mathrm{CVaR}_{95}$, the mean of its
+worst $5\%$. Every arm faces $10{,}000$ shared trajectories per cell and pays proportional costs
+at tiers $\{0, 1\%, 2\%\}$; the confirmatory cell is the combined coefficient
+perturbation at $1\%$ over 10 seeds, and the accounting conventions are in
+Appendix~\ref{app:config}. Three reference controllers run beside the arms: the
+exact reference derivative, the variance-minimising combination
+$\Delta_{\mathrm{MV}} = \partial_S C + (\rho\xi/S)\,\partial_v C$ of the two first
+derivatives,%
+% [CITATION NEEDED] local-risk-minimisation / minimum-variance hedge ratio:
+% Foellmer-Schweizer and an empirical minimum-variance-delta study. Neither source
+% is in the verified project record, so nothing is cited here rather than citing
+% unread work. Obtain, read, then add both and reference them at this point.
+ and a cost-aware policy suppressing small rebalances
+\citep{whalley1997asymptotic}. The mechanism falsifier is excess turnover over the
+exact-derivative reference on identical trajectories,
+\begin{equation}\label{eq:tex}
+T_{\mathrm{ex}}=\sum_{i=0}^{43}\bigl|\Delta\hat{\Delta}_i\bigr|
+-\sum_{i=0}^{43}\bigl|\Delta\Delta^{\circ}_i\bigr|,
+\qquad
+\hat{\Delta}_{-1}=\hat{\Delta}_{43}=\Delta^{\circ}_{-1}=\Delta^{\circ}_{43}=0,
+\end{equation}
+so the sum charges the initial acquisition and the final liquidation as well as
+the $42$ interior rebalances, and $T_{\mathrm{ex}} < 0$ denotes an arm trading less
+than the oracle. A gap present
+at zero cost indicates the robustness channel, a gap near zero at zero cost that
+widens with cost while $T_{\mathrm{ex}}$ falls indicates the cost channel, an
+unmoved $T_{\mathrm{ex}}$ rejects the cost channel whatever the profit and loss
+shows, and neither anywhere is the pre-registered null.
+
+The acceptance block, frozen before training and reproduced in
+Appendix~\ref{app:thresholds}, requires a $\geq 10\%$ relative improvement with an
+interval excluding zero at the confirmatory cell, rung 2 to beat rung 1 there,
+demonstrated dose-response monotonicity, held-out second-derivative and second-state
+RMSE each to fall by $\geq 15\%$ at value parity, and a $2\%$ negligibility floor on
+every contrast. Verdicts separate a pass or a fail from a \emph{null}, where the artifact was
+legitimately absent, and an \emph{error}, where evaluation was attempted and failed,
+since merging the two would let a broken run read as an absence of effect. Every
+contrast reports the registered pooled bootstrap over shared trajectories together
+with a per-seed companion asking whether the treatment replicates across training
+runs, which is what any generalisation language rests on. A pre-registered diagnostic established before training that the design could
+resolve a second-derivative error of the baseline's size and not one of the
+supervised arm's (Appendix~\ref{app:oracle}). That diagnostic certifies detectability
+under a noise-corruption error model; the baseline's realised error turned out to be
+a structured slope deficit rather than noise, so it bounds what the design can see
+for the model it assumed, not for the error that occurred. A twelve-component audit of
+the settlement, sign, CRN, premium, terminal-mark, residual, comparator-sourcing,
+label-construction, and shared-Greek-code paths found no defect that inverts a
+reported contrast. The residual operator itself is verified by manufactured
+solutions rather than by shape and finiteness assertions: it vanishes on the
+forward, the discount bond, and their combination, each an exact solution of the
+operator, and reproduces the analytic value on a quadratic whose four independent
+coefficients probe the $\tau$, $S$, $v$, and cross terms separately. Flipping the
+sign of the correlation term or deleting the variance-diffusion term fails that
+check, while a finiteness assertion passes under both.
+
+The shared residual weight $\lambda_{\mathrm{pde}}$ was selected on validation only,
+as the value minimising mean normalised validation RMSE over the value and its three
+derivatives for the unsupervised arm over the grid $\{0, 10^{-2}, 10^{-1}, 1\}$,
+returning $10^{-2}$. Two properties of that procedure matter for
+Section~\ref{sec:readout}. The winner is the smallest non-zero candidate and beats
+$\lambda_{\mathrm{pde}} = 0$ by only $3.4\%$, so the grid selected at its own
+boundary and $(0, 10^{-2})$ was never explored. And the residual is normalised by $\mathrm{mean}[(rC^{\star})^{2}]$, the
+squared discount term evaluated on the labels: model-free, but our design choice
+rather than a canonical one, and degenerate as $r \to 0$. Its root mean square is
+$0.527$ while the residual's own dominant term is $4.674$, so a nominal weight
+carries roughly $79$ times the weight a scale-matched normalisation would give it,
+and at the selected value the residual is $49\%$ of the unsupervised arm's total
+loss. The contract further pre-registered a robustness row re-running the
+confirmatory contrast with the weight sourced from the treated arm instead, so that
+the choice ``can be shown to be immaterial to the headline result (or shown not to
+be)''. That value is $0$, and the row is reported rather than deferred.
+
+\section{Results}
+\label{sec:results}
+
+The registered outcomes come first. The rest of the section is organised by one
+decomposition: a controller's regret against the best available controller splits
+into approximation error, which derivative supervision addresses, and control-design
+error, which it cannot. Read through that split the registered scorecard
+mis-attributes on three axes, and each is measured rather than argued below: where
+the accuracy is measured (Section~\ref{sec:region}), which direction the residual
+error points (Section~\ref{sec:mvbuild}), and which policy the cost tier rewards
+(Section~\ref{sec:readout}).
+
+\subsection{Pre-registered outcomes}
+\label{sec:reg}
+
+Table~\ref{tab:verdicts} reports every registered endpoint against its frozen
+threshold. The confirmatory test fails: at the registered cell the relative
+$\mathrm{CVaR}_{95}$ improvement of rung 3 over the residual-only baseline is $+0.02\%$
+against a $10\%$ bar, with pooled and per-seed intervals both covering zero, so the
+contrast is neither pooled-significant nor seed-robust. The order-attribution
+endpoint, which carries the registered causal claim, also fails, and its failure is
+not a null: the add-gamma rung is a reversal of $+0.0574$ in loss units, pooled
+interval $[+0.0527, +0.0621]$ and per-seed interval $[+0.0311, +0.0856]$, both
+excluding zero on the harmful side. Its relative size is $1.2\%$, below the
+registered $2\%$ negligibility floor, so the reading is that gamma supervision is
+statistically real, economically negligible, and harmful in sign at that cell,
+rather than inert. The registered vocabulary, admitting only a pass and a
+``failure equals honest null'', cannot express that outcome, which is recorded as a
+defect of the vocabulary.
+
+\begin{table}[!htbp]
+\caption{Pre-registered endpoints against frozen thresholds. Statistics are
+relative improvements where a percentage is shown and $\mathrm{CVaR}_{95}$
+differences in loss units otherwise, negative differences favouring the treated
+arm; intervals are the registered pooled bootstrap over shared CRN paths, with
+per-seed companions in the text. The $\Gamma$ and $\nu$ reductions clear their
+$15\%$ bars by roughly six times and the endpoint fails on the price-parity guard
+alone. The Bates verdict is scored at a cost tier the analysis inherited rather
+than one the contract fixes, and is reported as tier-dependent.}
+\label{tab:verdicts}
+\centering\footnotesize\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}llrlc@{}}
+\toprule
+Registered endpoint & Cell & Statistic & Pooled $95\%$ CI & Verdict \\
+\midrule
+Confirmatory $\mathrm{CVaR}_{95}$, rung 3 vs.\ PINN & combined, $1\%$, 10 seeds & $+0.02\%$ & $[-0.0242,+0.0242]$ & \textbf{fail} \\
+Order attribution, rung 2 vs.\ rung 1 & combined, $1\%$, 10 seeds & $+0.0574$ & $[+0.0527,+0.0621]$ & \textbf{fail} (reversal) \\
+Dose-response monotonicity & combined, $1\%$, 5 seeds & $\rho_S=0.029$ & $P(\rho_S\le0)=0.074$ & \textbf{not demonstrated} \\
+OOD $\Gamma$/$\nu$ RMSE at price parity & rung 3, both OOD regimes & $0.864$ & $[0.859,0.868]$ & \textbf{fail} (parity guard) \\
+In-model consistency, rung 3 vs.\ oracle & in-model, $0\%$, 10 seeds & $+0.35\%$ & $[-0.0073,-0.0050]$ & consistent \\
+Mechanism reading & combined, cost sweep & $-0.9624$ & $[-0.9804,-0.9443]$ & channel (i) \\
+Bates severity, decision-relevant regime & severity sweep, $1\%$ & $+0.311$ & $[+0.283,+0.339]$ & no decisive regime \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two verdicts need their direction stated rather than their label repeated. The
+accuracy endpoint fails on a conjoined value-parity guard and not on accuracy:
+second-derivative reduction is $0.894$ and $0.864$ at the two held-out regimes and
+second-state reduction $0.927$ and $0.930$ against a floor of $0.15$, while the
+parity term is scored two-sided and rejects the arm for improving the value by $82$
+to $91\%$. The registered verdict stands and the defect is reported rather than
+repaired after the fact. And the well-specified consistency cell was registered
+against the wrong contrast; on the contrast its source actually ran it returns
+$+0.35\%$, inside the floor, so that null reproduces
+(Appendix~\ref{app:exhibits}).
+
+\subsection{What derivative supervision delivers}
+\label{sec:delivers}
+
+Held-out derivative accuracy is the clearest effect in the study and does not depend
+on any choice examined later. Table~\ref{tab:greeks} reports held-out RMSE for all
+three derivatives at both evaluation regimes, against two references: the
+residual-only baseline the contract registers, and a value-only network carrying
+neither residual nor derivative labels. Supervision cuts second-derivative and
+second-state RMSE by $78$ to $96\%$ against either reference, attributable to the
+second-derivative labels specifically, since that rung alone cuts held-out
+second-derivative RMSE by $60\%$ and $59\%$, with value accuracy improving
+alongside rather than being traded away.
+
+\begin{table}[!htbp]
+\caption{Held-out Greek RMSE on the full contract grid and on the same metric
+restricted to the hedging box, as
+\texttt{near\_feller}/\texttt{strong\_neg\_corr}, five seeds; $\Gamma$ entries are
+$\times 10^{-3}$, lower is better. The baseline and the price-only network, neither
+of which sees a derivative label, exchange rank between the regions on $\Delta$ and
+$\Gamma$ at both regimes, while the supervised reduction survives either
+denominator and either region.}
+\label{tab:greeks}
+\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+& \multicolumn{2}{c}{$\Delta$ RMSE} & \multicolumn{2}{c}{$\Gamma$ RMSE} & \multicolumn{2}{c}{$\nu$ RMSE} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+Arm & full grid & hedging box & full grid & hedging box & full grid & hedging box \\
+\midrule
+residual-only baseline & $0.0537/0.0424$ & $0.0937/0.0689$ & $7.82/6.04$ & $14.82/11.83$ & $9.93/7.44$ & $20.26/15.85$ \\
+price-only feedforward & $0.0881/0.0815$ & $0.0409/0.0227$ & $8.29/7.17$ & $8.21/4.84$ & $5.74/2.89$ & $9.01/4.23$ \\
+rung 1 ($+\Delta$) & $0.0106/0.0079$ & $0.0161/0.0068$ & $2.56/1.58$ & $4.03/1.51$ & $2.66/1.73$ & $4.91/2.95$ \\
+rung 2 ($+\Delta{+}\Gamma$) & $0.0033/0.0034$ & $0.0053/0.0051$ & $1.02/0.64$ & $1.42/0.79$ & $1.59/1.28$ & $2.86/2.57$ \\
+rung 3 ($+\Delta{+}\Gamma{+}\nu$) & $0.0027/0.0038$ & $0.0037/0.0058$ & $0.83/0.82$ & $1.04/1.06$ & $0.73/0.52$ & $1.20/0.61$ \\
+\midrule
+rung 3 reduction vs.\ residual-only baseline & $95/91\%$ & $96/92\%$ & $89/86\%$ & $93/91\%$ & $93/93\%$ & $94/96\%$ \\
+rung 3 reduction vs.\ price-only & $97/95\%$ & $91/74\%$ & $90/89\%$ & $87/78\%$ & $87/82\%$ & $87/86\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.82\linewidth]{f7_label_controls.png}
+\caption{The gain requires the information in the labels, not a curvature-shaped
+penalty. Held-out second-derivative relative RMSE at the interpolated held-out
+regime (bars) with the extrapolated regime overlaid (markers); the dashed rule is
+the unsupervised baseline. A curvature penalty with no labels is substantially worse
+than adding nothing, shuffled labels are indistinguishable from adding nothing, and
+buying more value data instead of labels saturates well short. Five seeds.}
+\label{fig:controls}
+\end{figure}
+
+Three controls establish that the gain is the curvature \emph{information} in the
+labels rather than the smoothing effect of a curvature-shaped penalty
+(Figure~\ref{fig:controls}). A label-free curvature $L^{2}$ penalty reaches held-out
+second-derivative relative RMSE of $0.982$ against the unsupervised baseline's
+$0.410$, worse than adding nothing; shuffled labels, preserving the label
+distribution while destroying its correspondence to the state, reach $0.408$,
+indistinguishable from adding nothing; and buying more value data instead of labels
+saturates at $0.699$ held out, flat under a doubled-width retrain. Supervision
+reaches $0.045$. The first two also degrade the first-derivative fit, so their
+failure mode is training conflict rather than absence of signal, which is why they
+evidence that correct curvature information is required and not a claim about
+regularisers in general.
+
+On the decision the result is best stated as a level rather than as a contrast.
+Figure~\ref{fig:lambda} and Table~\ref{tab:lambda} report the two confirmatory arms
+separately over a hundredfold range of the shared residual weight. The supervised
+arm attains $\mathrm{CVaR}_{95}$ between $2.0758$ and $2.0905$ at every weight
+including zero, against the exact-derivative reference's $2.0794$ on the same
+trajectories, every rung seed-robust, while the unsupervised baseline moves from
+$2.1370$ to $3.0518$ over the same range. That flatness is not an artefact of the
+residual being negligible in the supervised objective. Decomposing the final
+training loss, the $\lambda$-weighted residual is $53.3\%$ of rung 3's objective at
+the registered weight, larger than its three derivative terms combined ($46.2\%$)
+and larger than the same term's share of the unsupervised arm's objective
+($42.8\%$): one term dominates both objectives and moves only one outcome. Supervision therefore reaches
+reference-level performance at held-out points and holds it against a hyperparameter
+with no principled setting, one that moves the unsupervised arm by more than the
+treatment is worth. Section~\ref{sec:method} gave the reasons this is
+generalisation rather than recall, and the controls above make the point
+empirically: the arms without labels fail at these same points. At positive cost
+tiers the comparison becomes cost-dominated rather than accuracy-dominated, and the
+best arm is then a cost-aware policy applied to the worst derivative field in the
+study (Appendix~\ref{app:exhibits}).
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\linewidth]{f1_lambda_pde.png}
+\caption{The confirmatory arms and their contrast against the residual weight,
+misspecified combined cell, 10 seeds. Left, the supervised arm holds the oracle
+level at every weight while the baseline degrades monotonically. Right, the same
+data as the registered contrast: the zero-cost curve clears the $10\%$ bar only
+above the region the contract's own selection criterion endorses, and the $1\%$
+tier is negative at every weight except the registered one.}
+\label{fig:lambda}
+\end{figure}
+
+\subsection{Why the contrast is not a property of the treatment}
+\label{sec:readout}
+
+Read as a difference instead of a level, the same sweep behaves quite differently,
+and the difference is what the contract registers. The contrast is monotone in
+$\lambda_{\mathrm{pde}}$ and convex in its logarithm, spanning an order of magnitude
+with no interior optimum and no plateau, and the registered weight sits where the
+curve is steepest. Since the supervised arm does not move, the contrast measures the
+baseline's handicap. At $\lambda_{\mathrm{pde}} = 0$ the two arms are bitwise
+identical to the registered value-only and residual-free arms (maximum
+$|\Delta\mathrm{CVaR}| = 0.0$ over five common seeds), so the sweep also completes
+the residual-by-supervision factorial at ten seeds: the supervision effect is
+$0.9614$ in loss units with the residual and $0.0611$ without it, an interaction of
+$15.7$ times, and $93.6\%$ of the registered contrast is repair of damage the
+residual does to the baseline. Against the undamaged value-only control, the only
+reference the residual has not degraded, supervision is worth $0.0611$ in loss units at zero
+cost, $2.9\%$ relative, pooled interval $[-0.0672, -0.0588]$ and seed-robust: above
+the pre-registered $2\%$ floor, and an order of magnitude below the contrast at the
+registered weight. Two independently written
+drivers produced the curve and agree to $0.00\mathrm{e}{+}00$ at all three
+overlapping rungs on bit-identical checkpoints.
+
+The registered weight is also the worst of the six points under the contract's own
+selection criterion, more than twice the score at the optimum near $10^{-4}$
+(Table~\ref{tab:lambda}). That is a grid-resolution failure rather than a rule failure: the rule was evaluated
+at four points that miss its own minimum by two orders of magnitude. A second
+failure survives any refinement. On the selection region the residual helps the
+baseline (validation first-derivative RMSE $0.0418$ at $10^{-2}$ against $0.0607$ at
+$0$) while at the states the decision visits it hurts ($0.0989$ against $0.0484$),
+so the criterion improves in the direction that degrades the decision, and since the
+evaluation regimes are excised from validation, no validation point can report that.
+At the registered cost tier the contrast is negative at every weight except the
+registered one, where it is $+0.01\%$: the single most favourable cell in the
+explored grid, and an uninformative coincidence, since the weight was fixed by a
+validation-blind rule and the tiers registered before it. Its mechanism is in the
+same table, the damage inflating the zero-cost gap while the damaged arm's
+under-trading turns the cost tier into an offsetting subsidy. That tier is also roughly $200$ times the rate
+\citet{armstrong2024deep} calibrate for the traded instrument, a design error
+discovered after freezing, and it licenses no rescue: at the criterion's own optimum
+the contrast at their stress tier is $-0.30\%$, so any cost-tier reframing is
+withdrawn rather than relabelled.
+
+What the residual does is measurable on the derivative field itself, and it is the
+mechanism of the damage rather than a benefit of supervision. On the decision
+trajectories the baseline's first derivative is a flattened sigmoid, regression slope
+$0.637$ against the reference and a state-dependent bias of $+0.101$, $-0.029$, and
+$-0.107$ across the three moneyness regions: a slope deficit, not a level bias. It
+therefore under-trades the reference by $38\%$ ($T_{\mathrm{ex}} = -0.695$) while
+supervision restores reference-level turnover ($-0.007$), so the registered cost
+channel runs against the treatment, its falsifier having presumed an over-trading
+baseline. The registered robustness channel fares no better: $86\%$ of the zero-cost contrast
+is already present under correct dynamics and the effect decays with misspecification
+severity, from $+27.7\%$ to $-4.2\%$ across the jump sweep. The account consistent
+with every cell is approximation quality of the first derivative feeding
+discrete-time tracking error, which \citet{noguer2026derivative} bounds in theory
+and for which the registered two-by-two has no bin; the pre-registered
+well-specified cell detected the omission (Appendix~\ref{app:exhibits}).
+
+\subsection{Where accuracy is measured, and against which hedge}
+\label{sec:region}
+
+The registered accuracy metric is scored on the full grid ($S \in [50,150]$,
+$K \in [60,140]$, $\tau \in [0.04,1]$) while the decision runs at one contract
+coordinate over $\tau \in [0.08, 0.25]$. Restricting the identical metric to the
+region the decision occupies (Table~\ref{tab:greeks},
+Figure~\ref{fig:coverage}b) reverses the residual-only baseline against the
+value-only network at both held-out regimes, on both derivatives, in all five seeds;
+the baseline is the only arm that degrades on entering it, first-derivative RMSE
+rising from $0.0537$ to $0.0937$ while every other arm improves. The residual's
+dominant term $\tfrac12 vS^{2}\partial_{SS}C$ is stiffest near the non-smooth
+initial condition and its root mean square is $1.45$ times larger inside the region,
+consistent with the reversal without establishing it. The consequence is
+method-level: two models can rank one way under the protocol the literature reports
+and the opposite way under the accuracy the decision consumes. The axes do not
+conflict when measured in one region, where first-derivative RMSE orders the arms
+($0.0038 < 0.0057 < 0.0202 < 0.0484 < 0.0989 < 0.1458$) exactly as zero-cost
+$\mathrm{CVaR}_{95}$ does, with two departures Section~\ref{sec:mvbuild} explains.
+
+A ranking reversal is an existence result, and on its own it does not license the
+obvious recommendation. Tested directly, restricting the metric to the decision's
+region is barely better than the grid at predicting realised cost: pooled pairwise
+concordance over seven arms, five seeds and two held-out regimes is $0.733$
+restricted against $0.710$ on the grid, $0.860$ against $0.835$ once the
+biased-label arm is set aside, and for the first derivative at the extrapolated
+regime the restricted metric is worse ($\rho$ $0.271$ against $0.350$). The region
+is the wrong object. What it crudely approximates is the error weighted by the
+occupancy measure the controller induces,
+$\mathbb{E}_{\mu^{\pi}}[(\hat{D}C - DC)^{2}]$, evaluated at the states at which the
+controller actually forms positions; recomputed on the frozen trajectories, that
+quantity predicts realised cost better than either alternative on every derivative
+and on both statistics (Table~\ref{tab:metric}). The recommendation is therefore the
+estimand, with the region-restricted metric named as its crude proxy rather than as
+the fix. Two caveats travel with it. The occupancy metric differs from the other two
+in weighting \emph{and} in parameter cell, so only the grid-versus-region comparison
+is clean; and it is one cell over five seeds, which makes it suggestive rather than
+settled. A third bounds the in-region accuracy claim itself: label support inside
+that region is thin, masked at $1.30$ times the outside rate, with two maturity
+nodes the decision passes through masked at $98.8\%$ and $84.8\%$
+(Appendix~\ref{app:exhibits}).
+
+\begin{table}[!htbp]
+\caption{Which accuracy metric predicts the decision. Rank agreement of held-out
+derivative error against realised zero-cost misspecified $\mathrm{CVaR}_{95}$ across
+seven arms and five seeds, for the same error measured three ways: on the full
+parameter grid as reported by convention, restricted to the region the decision
+occupies, and weighted by the occupancy measure the controller induces. Higher is
+better in both columns. The occupancy estimand dominates on every derivative; the
+region restriction is barely better than the grid and for the first derivative is
+not better at all.}
+\label{tab:metric}
+\centering\footnotesize\setlength{\tabcolsep}{6pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+& \multicolumn{3}{c}{Spearman $\rho$} & \multicolumn{3}{c}{pairwise concordance} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+Derivative & grid & region & occupancy & grid & region & occupancy \\
+\midrule
+$\partial u/\partial S$ & $0.386$ & $0.371$ & $\mathbf{0.543}$ & $0.619$ & $0.648$ & $\mathbf{0.724}$ \\
+$\partial^{2}u/\partial S^{2}$ & $0.468$ & $0.507$ & $\mathbf{0.707}$ & $0.667$ & $0.700$ & $\mathbf{0.771}$ \\
+$\partial u/\partial v$ & $0.714$ & $0.775$ & $\mathbf{0.800}$ & $0.776$ & $0.800$ & $\mathbf{0.829}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Reconstructing the better controller from the supervised fields}
+\label{sec:mvbuild}
+
+The reference the decision is scored against is not the best available controller.
+Driving the same trajectories with $\Delta_{\mathrm{MV}}$ gives misspecified
+zero-cost $\mathrm{CVaR}_{95}$ of $1.670$ against the exact-derivative reference's
+$2.082$, $19.8\%$ better, and $10.6\%$ better under correct dynamics. The registered
+headline statistic, the fraction of the baseline-to-reference gap closed, therefore
+presupposes a ceiling that is not one: the supervised arm closes $98.6\%$ of the
+distance to the exact derivative but $69.8\%$ of the distance to the controller that
+wins. As a decomposition, rung 3's regret against the best
+available controller is $0.4261$ in loss units, of which $0.0141$ is approximation
+error against the exact derivative and $0.4120$ is the design of the
+exact-derivative policy itself: $96.7\%$ of what is left to win is control design, a
+ratio of $29.2$ to one. For the unsupervised arm the split inverts to $70.8\%$
+approximation, which is what being the damaged arm looks like. This is the sense in
+which the registered decision metric could not have rewarded accuracy at the
+accuracy levels supervision reaches. This also explains the two departures noted above and
+the registered label-noise outcome: a systematically biased second-derivative label
+produces the best learned controller in the study at zero cost, because its bias
+lies in the variance-minimising direction and recovers $87\%$ of that gap
+(Appendix~\ref{app:exhibits}).
+
+Because $\Delta_{\mathrm{MV}}$ is assembled from two first derivatives,
+$\partial_S C$ and $\partial_v C$, any arm carrying both can build it from its own
+outputs with no further reference. This is where the accuracy result and the
+decision result meet. It was run after the registered analysis was complete and is exploratory: it moves
+no registered verdict and is labelled as such wherever it appears. It is not,
+however, an anecdote. It reuses the frozen checkpoints, the same
+common-random-number trajectories every other arm hedges, and the same paired
+bootstrap the contract registers, at five seeds.
+
+Every arm that supervises the first two derivatives reconstructs the
+variance-minimising controller to within the pre-registered $2\%$ floor
+(Table~\ref{tab:mv}, Appendix~\ref{app:exhibits}): rung 3 lands at $1.6701$ against
+the analytic $1.6696$, a pooled difference of $+0.0004$ with interval
+$[-0.0013, +0.0021]$ covering zero, and rung 2 at $1.6563$, marginally better than
+the analytic construction and seed-robust but at $0.80\%$ relative, inside the
+floor. The arms without second-derivative labels do not: supervising only the first
+derivative leaves $3.27\%$ and the value-only network $3.40\%$, both seed-robust and
+both outside the floor, while the residual-damaged baseline leaves $42.9\%$. Two readings follow. Derivative accuracy transfers to a better decision once the
+decision consumes the fields supervision improves, which the registered
+first-derivative-only decision never did: the reconstructed controller beats the
+exact-derivative reference by $19.8\%$ misspecified and $10.6\%$ under correct
+dynamics, both seed-robust. And second-derivative supervision is sufficient for the reconstruction without
+second-state supervision: the step from first-derivative-only to first-and-second
+closes the gap ($-3.27\%$ to $+0.80\%$, both seed-robust) while adding the
+second-state label on top changes nothing outside the floor. Necessity is not
+established, because the ladder never trained a first-plus-second-state arm, which
+is the obvious control and the first experiment we would run next. The mechanism is in Table~\ref{tab:greeks}: supervising the second
+derivative also improves the \emph{unsupervised} second-state derivative that
+$\Delta_{\mathrm{MV}}$ consumes, from $2.66$ to $1.59$. This is the one result that
+gives the registered causal rung a role, and it is a role on a different decision
+from the registered one.
+
+
+% =============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+Every registered efficacy endpoint of this study failed, and the apparent effect
+size on the registered decision is not a property of the treatment at all: it is a
+monotone readout of the residual weight, $93.6\%$ of it repair of damage that
+residual does to the baseline in exactly the region the decision occupies. What the design establishes instead is where that scorecard sends the credit wrong.
+Accuracy is scored on a grid while the decision consumes it on a trajectory, and the
+error weighted by the controller's own occupancy measure predicts the decision
+better than the grid or a hand-drawn region. Direction matters as much as size,
+which is why a biased label produces the best learned controller here. And $96.7\%$
+of the gap still separating the supervised arm from the best available controller is
+control design, so at the accuracy supervision reaches this decision could not have
+rewarded accuracy.
+Supervision itself does deliver: held-out derivative accuracy that three
+information-free controls cannot reproduce, reference-level decision cost held
+across a hundredfold range of a training weight that is simultaneously the largest
+term in its own objective, and enough fidelity in two first derivatives to
+reconstruct a variance-minimising controller that beats the exact-derivative
+reference by $19.8\%$.
+
+What we would ask of any study reporting derivative accuracy for a surrogate whose
+derivatives are spent downstream. Score the derivative error against the occupancy measure the decision induces rather
+than on the parameter grid alone, and do not settle for restricting the grid to a
+hand-drawn region: in our data the two regions ranked two arms oppositely in every
+seed, yet the restriction bought almost nothing in predictive power while the
+occupancy estimand bought a great deal. Report treated and control arms as levels, not only
+as contrasts, because a contrast moves when either arm moves and ours moved
+elevenfold while the treated arm sat still. Resolve hyperparameter grids finely
+enough to locate their own optimum; ours selected at its boundary and the registered
+value was the worst of six points under the criterion that chose it. Check that the
+reference the decision is scored against is the best one available, since ours was
+not. And fix a negligibility floor in advance, because pooled resolution over
+$10^{4}$ trajectories finds statistically real effects that are worth nothing.
+
+Five limitations bound these claims, the first sharpest. The magnitude of the
+residual damage depends on our own normalisation of that term, which inflates its
+effective weight by roughly $79$ times, so the size of the pathology should not be
+read as generic; what generalises in form is the pair of selection failures, of
+which only the first is repaired by a finer grid. The second-derivative rung was not re-measured at a weight the criterion endorses.
+The controls, the reconstruction result, and the residual-free arm carry five seeds
+rather than ten, and the occupancy comparison is one parameter cell. The decision
+terminates at $\tau = 0.08$, so the null is scoped to that horizon rather than
+showing the design blind to curvature effects, which also act earlier. Label support
+inside the decision's region is thin, and the accuracy claim there is scored on a
+mask that removes $1.30$ times as many points as outside it. Labels and reference
+come from the same oracle family, so this is generalisation of a solution field
+rather than discovery of an unknown one; the surrogate is a small smooth tanh
+network on a two-state parabolic problem, not a claim about surrogates in general;
+and the misspecification is synthetic, with the second held-out regime lying
+$0.101$ in $\rho$ beyond the sampled edge, about a sixth of that coordinate's range,
+a real but modest extrapolation. The natural next experiments are the missing
+first-plus-second-state arm, supervising toward $\Delta_{\mathrm{MV}}$ directly,
+rebalancing finely enough that the discretisation term the theory identifies binds,
+and dosing label bias rather than label variance.
+
+\begin{ack}
+Funding and competing-interest disclosure to be completed for the camera-ready
+version. The \texttt{ack} environment is hidden automatically in the anonymized
+submission, so this section is safe to fill in now.
+\end{ack}
+
+% =============================================================================
+\begin{thebibliography}{99}
+
+\bibitem[Albrecher et~al.(2007)]{albrecher2007little}
+Albrecher, H., Mayer, P., Schoutens, W., and Tistaert, J. (2007).
+\newblock The little Heston trap.
+\newblock \emph{Wilmott Magazine}, January 2007, 83--92.
+
+\bibitem[Armstrong and Tatlow(2024)]{armstrong2024deep}
+Armstrong, J. and Tatlow, G. (2024).
+\newblock Deep gamma hedging.
+\newblock arXiv:2409.13567.
+
+\bibitem[Carr and Madan(1999)]{carrmadan1999option}
+Carr, P. and Madan, D.~B. (1999).
+\newblock Option valuation using the fast Fourier transform.
+\newblock \emph{Journal of Computational Finance}, 2(4):61--73.
+% [VERIFY] Page range not confirmed against the original; author/year/venue/issue are.
+
+\bibitem[Chakhoyan et~al.(2025)]{chakhoyan2025deepsvm}
+Chakhoyan, H., Kalici, S., and Malandain, K.~A. (2025).
+\newblock DeepSVM: Learning stochastic volatility models with physics-informed
+deep operator networks.
+\newblock arXiv:2512.07162.
+
+\bibitem[Czarnecki et~al.(2017)]{czarnecki2017sobolev}
+Czarnecki, W.~M., Osindero, S., Jaderberg, M., \'Swirszcz, G., and Pascanu, R. (2017).
+\newblock Sobolev training for neural networks.
+\newblock In \emph{Advances in Neural Information Processing Systems (NeurIPS)}, volume 30.
+
+\bibitem[Hainaut and Casas(2024)]{hainaut2024option}
+Hainaut, D. and Casas, A. (2024).
+\newblock Option pricing in the Heston model with physics inspired neural networks.
+\newblock \emph{Annals of Finance}, 20(3):353--376.
+% [VERIFY] Volume/pages taken from DeepSVM's reference [7]; confirm against the
+% published paper.
+
+\bibitem[Heston(1993)]{heston1993closed}
+Heston, S.~L. (1993).
+\newblock A closed-form solution for options with stochastic volatility with
+applications to bond and currency options.
+\newblock \emph{The Review of Financial Studies}, 6(2):327--343.
+
+\bibitem[Huge and Savine(2020)]{huge2020differential}
+Huge, B. and Savine, A. (2020).
+\newblock Differential machine learning.
+\newblock arXiv:2005.02347.
+
+\bibitem[Lagaris et~al.(1998)]{lagaris1998artificial}
+Lagaris, I., Likas, A., and Fotiadis, D. (1998).
+\newblock Artificial neural networks for solving ordinary and partial
+differential equations.
+\newblock \emph{IEEE Transactions on Neural Networks}, 9(5):987--1000.
+
+\bibitem[Noguer i Alonso(2026)]{noguer2026derivative}
+Noguer i Alonso, M. (2026).
+\newblock Derivative-informed operator learning for finance: On-the-fly Greeks,
+surfaces, hedging, and control.
+\newblock arXiv:2606.05900.
+
+\bibitem[Raissi et~al.(2019)]{raissi2019physics}
+Raissi, M., Perdikaris, P., and Karniadakis, G.~E. (2019).
+\newblock Physics-informed neural networks: A deep learning framework for solving
+forward and inverse problems involving nonlinear partial differential equations.
+\newblock \emph{Journal of Computational Physics}, 378:686--707.
+
+\bibitem[Sakuma(2026)]{sakuma2026a}
+Sakuma, T. (2026).
+\newblock Differential machine learning for 0DTE options with stochastic
+volatility and jumps.
+\newblock arXiv:2603.07600.
+
+\bibitem[Whalley and Wilmott(1997)]{whalley1997asymptotic}
+Whalley, A.~E. and Wilmott, P. (1997).
+\newblock An asymptotic analysis of an optimal hedging model for option pricing
+with transaction costs.
+\newblock \emph{Mathematical Finance}, 7(3):307--324.
+
+\end{thebibliography}
+
+% NOTE ON THE BIBLIOGRAPHY: the pre-results draft carried a longer related-work
+% bibliography (Buhler, Giles-Glasserman, Frandsen, Fu-Hirsa, Gobet-Makhlouf,
+% Broden-Wiktorsson, Kennedy, Leland, Lu, O'Leary-Roseberry, Yao, Zhang,
+% Aboussalah, Bansal, Sun, Armstrong-Ionescu). Restore those entries if the
+% related-work discussion is expanded back into its own section. Sakuma (2026b)
+% is DELIBERATELY DROPPED: the project record does not contain that paper, so
+% every sentence leaning on it was unverified. The minimum-variance /
+% local-risk-minimisation estimator (Foellmer-Schweizer family) is described by
+% its formula and measured behaviour and is deliberately NOT cited until a source
+% is obtained and read.
+
+\section*{Declaration of AI-assisted technologies}
+The authors used generative AI and AI-assisted tools for manuscript drafting,
+language refinement, and code drafting and debugging. The authors directed the
+project, reviewed and verified the manuscript, the code, and all reported results,
+and take full responsibility for the final manuscript.
+% NOTE: check the workshop's AI-assistance policy. Some NeurIPS workshops require
+% this as a checklist entry rather than a section.
+
+\appendix
+% =============================================================================
+\section{Pre-registered acceptance block and amendment record}
+\label{app:thresholds}
+The two blocks below are reproduced verbatim from
+\texttt{heston\_benchmark\_v6.yaml} at tag \texttt{benchmark-v6-frozen}, frozen
+before any training run: the acceptance thresholds, and the weight-selection block
+whose robustness row Section~\ref{sec:readout} discharges. The only edit is
+typographic, the source's em-dash comment separators being written as two hyphens
+so that the listing is pure ASCII. Amendments adopted after the freeze and before any result
+was observed are recorded in Table~\ref{tab:amendments}; where an amendment
+supersedes a line of the block, the amended text governs, and the superseded
+original is retained rather than silently overwritten.
+
+\begin{lstlisting}[basicstyle=\ttfamily\tiny,breaklines=true,breakatwhitespace=true,keepspaces=true,columns=fullflexible,postbreak=\mbox{$\hookrightarrow$\space},breakindent=1.5em]
+acceptance_thresholds:
+  confirmatory_cell_pass: "misspec delta CVaR95 improvement >=10% relative AND paired-bootstrap 95% CI excludes 0 (combined,1% TC,baseline,rung3 vs standard_pinn)"
+  confirmatory_cell_rel_min: 0.10             # AM2-1 -- the ">=10% relative" named above, AS A NUMBER. Was the last surviving Python literal after C1 (Hedging_backtest.contract_thresholds, marked TODO(C1)); requested in audit/contract_requests.md. Prose above unchanged; the number joins it
+  headline_scale_free: fraction_of_baseline_to_oracle_gap_closed
+  order_attribution: "rung2 beats rung1 at the cell, CI excludes 0; failure = honest null"
+  dose_response:                              # Q2 -- was one-line prose "monotone (isotonic + rank correlation); flat = regularization null"
+    criteria: "Spearman rho > 0 (shape confirmed via isotonic fit) AND one-sided seed-bootstrap tail probability P(rho<=0) < bootstrap_tail_prob_max"
+    bootstrap_tail_prob_max: 0.05             # C1/Q2 -- was analyze_results.py:450 spearman_p_max
+    tail_prob_definition: "a one-sided BOOTSTRAP TAIL PROBABILITY over seeds that rho<=0 -- NOT a classical p-value"
+    interpretation: >
+      Low-powered at 5-7 dose levels: a 'flat' verdict establishes ONLY "monotonicity not
+      demonstrated", NOT that the dose-response IS flat. These are different claims; the
+      memo must not conflate them.
+    conservatism: "this criterion is conservative wrt the study's hypothesis -- it can only move a verdict toward the pre-registered null"
+  ood_gamma_rmse_reduction_min: 0.15
+  ood_vega_rmse_reduction_min: 0.15           # Greek-accuracy leg
+  price_parity_within: 0.10
+  mechanism_falsifier: "0%-TC gap => robustness (i); zero-at-0% widening + T_ex->0 => cost (ii); T_ex unmoved rejects (ii). Both publishable. STATE BEFORE RESULTS."
+  in_model_hedging: NOT_PASS_FAIL             # = (in-model x cost) 2x2 corner; must reproduce Sakuma null
+  sakuma_null_rel_tol: 0.02                   # C1 -- was analyze_results.py:622 rel_tol; band for the in_model_hedging consistency check above
+  seeds: {default: 5, confirmatory_cell: 10}
+  tail_claim_requires: paired_bootstrap_over_CRN_paths_with_seed_variance_separated
+  verdict_vocabulary:                         # AM2-2 -- permitted values of the `verdict` column of results/tables/threshold_verdicts.csv. Fix batch 2 (A4) introduced `error`; the reporting schema is part of the pre-registration, so the vocabulary is declared here rather than discovered from the code
+    universal:                                # available to EVERY threshold row
+      "null": "NOT EVALUATED. The artifact is legitimately absent, or a declared precondition is unmet (e.g. fewer than seeds.confirmatory_cell seeds present). NO claim is made in either direction -- this is not a result"
+      "error": "evaluation was ATTEMPTED and FAILED: the artifact is PRESENT but unusable (renamed column, array-shape mismatch, failed import). A defect in the analysis or in the artifact, NEVER a study outcome"
+    outcome_values:                           # each threshold emits exactly one of ITS pair/set in place of a universal value
+      confirmatory_cell: [pass, fail]         # fail = honest null
+      order_attribution: [pass, fail]         # fail = honest null
+      ood_greek_thresholds: [pass, fail]      # fail = honest null
+      dose_response: [monotone, flat]         # flat = "monotonicity not demonstrated" (see dose_response.interpretation), NOT "is flat"
+      sakuma_null_consistency: [consistent, flag]   # consistency check, NOT pass/fail (see in_model_hedging)
+      mechanism_adjudication: [channel_i, channel_ii, decomposition, no_channel]   # `no_channel` is the ADJUDICATED "neither channel is present" reading; renamed from "null" (fix batch 3 ITEM 5) so it no longer collides with the universal not-evaluated string
+      goldilocks_bates: [decision_relevant_regime_located, no_decisive_regime]      # `no_decisive_regime` = severity rows present, none decisive; renamed from "null" for the same reason. NO rows at all is the universal `null` (not evaluated)
+    must_not_collapse: >
+      `null` and `error` must NEVER be merged in any table, memo or figure. "Not evaluated"
+      and "evaluation broke" are different states, and only the first is a legitimate
+      reporting outcome: an `error` row means the study has a defect to fix, not a result to
+      report. mechanism_memo renders every verdict identically as **{verdict}**, so the
+      distinction lives in the VALUE and must survive every downstream transcription.
+    yaml_note: "`null` and `error` are QUOTED because bare null is a YAML null literal; they are the strings 'null' and 'error'"
+
+lambda_selection:
+  lambda_delta: {value: 1.0, fixed: true, swept: false}       # train.py:_apply_lambdas -- "fixed 1.0; not a swept axis"
+  lambda_pde:
+    source_arm: standard_pinn                                  # Q3 decision -- was rung3_delta_gamma_vega (train.py:135)
+    rationale: >
+      Tuning a shared hyperparameter on the treatment arm (rung3) and applying it to the
+      baseline (standard_pinn) handicaps the baseline, for which the PDE residual is the
+      ONLY structural signal. Sourcing lambda_pde from standard_pinn's own validation score
+      is the conservative direction wrt the study's hypothesis.
+    candidates: [0.0, 0.01, 0.1, 1.0]                          # train.py:139-140 sweeps.lambda_pde default
+  lambda_gamma:
+    source_arm: rung3_delta_gamma_vega                          # at the lambda_pde fixed immediately above
+    candidates: [0.3, 1.0, 3.0]                                # train.py:141 -- playbook pre-reg {0.3,1,3}
+  lambda_vega:
+    source_arm: rung3_delta_gamma_vega                          # at the lambda_pde fixed immediately above
+    candidates: [0.3, 1.0, 3.0]                                # train.py:142 -- playbook pre-reg {0.3,1,3}
+  tune_on: validation_only
+  robustness_row:
+    description: >
+      The confirmatory contrast (rung3 vs standard_pinn) is ADDITIONALLY reported at the
+      rung3-sourced lambda_pde, so the sourcing choice can be shown to be immaterial to the
+      headline result (or shown not to be).
+    status: robustness_result_not_a_second_confirmatory_test    # Q3 -- does not replace acceptance_thresholds.confirmatory_cell_pass
+\end{lstlisting}
+
+\begin{table}[h]
+\caption{Amendments adopted after the freeze and before any result was observed.
+Dates are filled from the signed amendment record at camera-ready. Labels are frozen
+at tag \texttt{v6-labels-20260812}.}
+\label{tab:amendments}
+\centering\footnotesize
+\begin{tabular}{@{}llp{0.56\linewidth}@{}}
+\toprule
+ID & Date & Amendment \\
+\midrule
+Q1 & & Rebalancing recorded as 43 steps at $\Delta t = 0.003953488$ ($252.94$/yr).
+$T' = 0.17$ does not divide evenly into $1/252$ steps, so ``daily at $1/252$'' is
+superseded \\
+Q2 & & \texttt{dose\_response}: a non-monotone curve is reported as monotonicity not
+demonstrated. The phrase ``flat = regularization null'' is superseded. The
+accompanying statistic is a one-sided seed-bootstrap tail probability, not a
+classical $p$-value \\
+Q3 & & Sourcing of the shared $\lambda_{\mathrm{pde}}$ is a pre-registered decision:
+$\lambda_{\mathrm{pde}}$ from \texttt{standard\_pinn}, $\lambda_\Gamma$ and
+$\lambda_\nu$ from rung 3, with the robustness row above as the declared alternative \\
+AM2-2 & & \texttt{null} (artifact legitimately absent, evaluation not attempted) and
+\texttt{error} (evaluation attempted and failed) are distinct verdicts, never merged \\
+AM3 & & Headroom gate reclassified as a diagnostic bounding the detectable effect,
+not a feasibility test; decision and diagnostic $\sigma$-ladders separated; declared
+deviations recorded (anisotropic spot-dominated corruption with an
+amplitude-matched independent comparator, and a per-seed rather than pooled CI
+decision rule) \\
+AM3-1 & & The delta clip amplifies the delivered Greek error, so pilots are compared
+against the effective rather than the nominal $\sigma_{\mathrm{rel}}$ \\
+4 & & Fourth-leg grid settings promoted to function defaults ($n_v = 481$,
+$v_{\max} = 1.6$); certification and as-run configurations agree, $7/7$ gates pass \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =============================================================================
+\section{Full configuration}
+\label{app:config}
+
+\begin{table}[!htbp]
+\caption{Notation. The left column is used throughout for brevity; the right column
+is what each object is in surrogate-modelling terms. Nothing in the argument depends
+on the financial reading.}
+\label{tab:notation}
+\centering\footnotesize\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}llp{0.44\linewidth}@{}}
+\toprule
+Symbol & Domain name & Reading in this paper \\
+\midrule
+$C$ & option price & the solution field the surrogate approximates \\
+$S$ & spot price & the state the decision acts on \\
+$v_0$ & initial variance & second state coordinate, unobserved volatility level \\
+$\tau$ & time to maturity & time to the decision horizon; decreases along the trajectory \\
+$K$ & strike & contract coordinate; fixed at $100$ for the decision \\
+$\vartheta$ & Heston parameters & coefficients of \eqref{eq:hestonpde}; held out at evaluation \\
+$\Delta=\partial_S C$ & delta & first derivative; the quantity the decision consumes \\
+$\Gamma=\partial_{SS}C$ & gamma & second derivative; supervised in rungs 2 and 3 \\
+$\nu=\partial_{v_0}C$ & vega & derivative in the second state \\
+$\mathrm{CVaR}_{95}$ & tail risk & mean of the worst $5\%$ of the loss distribution \\
+oracle & (this paper) & the four-solver numerical reference for $C$ and its derivatives \\
+hedging & (this paper) & the sequential decision: hold $\hat{\Delta}$ units of the state, rebalance, settle \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+\caption{Arms. One model class, flags only, identical architecture ($4\times64$
+tanh, $13{,}121$ parameters), sampling, terminal treatment, and compute budget
+($20{,}000$ steps). Five seeds per arm, ten at the confirmatory pair and on every
+rung of the residual-weight sweep. The label-corruption and label-free-penalty
+control arms of Section~\ref{sec:delivers} share this configuration; they are
+specified, with the full dose ladder, in Appendix~\ref{app:exhibits}.}
+\label{tab:arms}
+\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lccccl@{}}
+\toprule
+Arm & PDE & $\Delta$ & $\Gamma$ & $\nu$ & Role \\
+\midrule
+price-only feedforward & -- & -- & -- & -- & supervision-OFF, residual-OFF cell \\
+information-matched price-only & -- & -- & -- & -- & data-side saturation control \\
+residual-only baseline & \checkmark & -- & -- & -- & Hainaut--Casas baseline \\
+rung 1 ($+\Delta$) & \checkmark & \checkmark & -- & -- & differential-ML rung \\
+rung 2 ($+\Delta{+}\Gamma$) & \checkmark & \checkmark & \checkmark & -- & registered causal rung \\
+rung 3 ($+\Delta{+}\Gamma{+}\nu$) & \checkmark & \checkmark & \checkmark & \checkmark & main arm \\
+\texttt{sobolev\_sans\_pde} & -- & \checkmark & \checkmark & \checkmark & residual-OFF, supervision-ON cell \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\caption{Frozen configuration in full. Blocks, in order: training, oracle, and
+evaluation; hedging simulation and misspecification cells; metric roles.}
+\label{tab:configfull}
+\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lp{0.66\linewidth}@{}}
+\toprule
+Component & Setting \\
+\midrule
+Network inputs & $(S, K, \tau, \kappa, \theta, \xi, \rho, v_0)$; $4\times64$ tanh, $13{,}121$ parameters, $20{,}000$ steps per arm \\
+Parameter sampling & Latin hypercube (declared, seeded); $\kappa\in[1,4]$, $\theta\in[0.02,0.12]$, $\xi\in[0.20,0.60]$, $\rho\in[-0.80,-0.20]$, $v_0\in[0.01,0.12]$ \\
+Oracle-trust cutoff & reject $2\kappa\theta/\xi^{2}<0.40$. This is an oracle-trust threshold, \emph{not} the Feller condition $2\kappa\theta/\xi^{2}\geq 1$: points with ratio in $[0.40,1)$ are retained in training and routed to the fourth leg, and \texttt{feller\_violating\_volvol} (ratio $0.44$) clears the cutoff and is held out by its anchor ball alone. Anchor balls have radius $0.10\sqrt{5}=0.2236$ in range-normalised Euclidean coordinates, i.e.\ $10\%$ of the unit-cube diagonal. Realised Feller ratio $\geq 0.4061$; no sampled point falls inside any ball, the nearest lying at $1.03$ to $1.64\times$ the radius; minimum sampled $\rho = -0.7989$ \\
+$(S,K,\tau)$ grid & $41\times33\times16$; $S\in[50,150]$, $K\in[60,140]$, $\tau\in[0.04,1]$; $r=0.02$, $q=0$, European calls. Training labels use $64$ shared $(S,K,\tau)$ triples \\
+Oracle legs & (i) autodiff through the trap-free CF; (ii) high-order finite differences on the CF price grid; (iii) Monte-Carlo pathwise / likelihood-ratio. Legs (i) and (ii) share the characteristic-function machinery and are not independent \\
+Fourth leg & Craig--Sneyd ADI on \texttt{near\_feller}, \texttt{feller\_violating\_volvol}, and any point with Feller ratio in $[0.40,0.60]$, at $n_x{=}901$, $n_v{=}481$, $x_{\max}{=}4.0$, $v_{\max}{=}1.6$, $1000$ steps/yr, $c_x{=}0.05$ \\
+Tolerance, masking & $10^{-3}$ relative agreement; pairs involving the MC leg use $\mathrm{tol_{rel}}\cdot\mathrm{scale} + 3\sigma_{\mathrm{MC}}$; overall mask rate $0.098$ \\
+Frozen labels & $23{,}623$ train and $5{,}936$ validation rows retained against the $5N = 20{,}480$ floor ($+15.3\%$) \\
+Seeds & 5 per arm, 10 at the confirmatory cell and on every rung of the residual-weight sweep \\
+\midrule
+Strategy, instrument & delta-only in the underlying and cash, fixed across arms; at-the-money European call, $S_0{=}K{=}100$, $\tau_0{=}0.25$ \\
+Horizon, rebalancing & hedge to $T'{=}0.17$ and liquidate; 43 steps at $\Delta t=0.003953488$ ($252.94$ per year), fixed across arms \\
+Paths & $10{,}000$ per cell, shared by all arms as deterministic seed-keyed common-random-number trajectories. Streams key off \texttt{(seed, stream)} independently of the arm, so a cell is simulated once and every arm is evaluated on those same arrays; production ran with \texttt{paths\_dir: null} and no path bank was frozen to disk \\
+Transaction costs & proportional on traded notional, registered tiers $\{0, 1\%, 2\%\}$ \\
+Misspecification & train on the baseline anchor; hedge under $\xi{\uparrow}0.45$, $\rho{\downarrow}{-}0.80$, and their combination \\
+Cross-model & Bates sweep ($\lambda_j\in\{0,0.1,0.25,0.5\}$, $\mu_j{=}-0.10$, $\sigma_j\in\{0.05,0.10,0.15\}$; $\lambda_j{=}0$ must recover the Heston result) and one Merton cell \\
+Competitors & Monte-Carlo-Greek hedger; oracle-$\Delta$; no-trade-band smoothed baseline; minimum-variance delta \\
+\midrule
+Primary metric & misspecified delta-only hedging $\mathrm{CVaR}_{95}$, held-out settings only \\
+Mechanism falsifier & $T_{\mathrm{ex}}$ of \eqref{eq:tex} \\
+Secondary & out-of-distribution parameter $\Gamma$ and $\nu$ RMSE with tail quantiles \\
+Sanity only & price RMSE; in-domain Greek RMSE including vanna; $\tau$ and wing holdouts; in-model hedging \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =============================================================================
+\section{Cost profile, dose-response, and supporting exhibits}
+\label{app:exhibits}
+
+\paragraph{What the mask removes, and where.} The oracle mask drops $9.79\%$ of
+label cells. It does not select the hard points: masked cells have lower mean
+curvature than retained ones ($0.0042$ against $0.0091$) and sit at short maturity
+and deep out-of-the-money, where a \emph{relative} agreement tolerance is hardest to
+satisfy, so the mask is a tolerance artefact rather than difficulty selection.
+It is not neutral in location, however. Inside the region the decision occupies the
+mask rate is $0.1233$ against $0.0948$ outside, a ratio of $1.30$, and two maturity
+nodes the trajectory passes through are almost entirely removed, $98.8\%$ at
+$\tau = 0.093$ and $84.8\%$ at $\tau = 0.115$. The in-region accuracy claim of
+Section~\ref{sec:region} is therefore scored where label support is thinnest, which
+is stated with the claim rather than in a footnote.
+
+\begin{table}[h]
+\caption{Masked against retained label cells, by axis. The mask concentrates on
+short maturity, deep out-of-the-money, low-curvature points: a property of the
+relative tolerance, not a selection of difficult states.}
+\label{tab:mask}
+\centering\footnotesize\setlength{\tabcolsep}{6pt}
+\begin{tabular}{@{}lrrrl@{}}
+\toprule
+Axis & masked mean & retained mean & KS & reading \\
+\midrule
+curvature $|\partial^{2}u/\partial S^{2}|$ & $0.0042$ & $0.0091$ & $0.689$ & mask sits on low curvature \\
+maturity $\tau$ & $0.202$ & $0.599$ & $0.634$ & mask sits on short $\tau$ \\
+moneyness $S/K$ & $0.722$ & $1.088$ & $0.556$ & mask sits deep out-of-the-money \\
+Feller ratio & $2.706$ & $3.073$ & $0.088$ & mildly easier retained set \\
+$|\rho|$ & $0.552$ & $0.497$ & $0.149$ & moderately easier retained set \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{What derivative labels cost.} Derivative labels are near-free from the
+characteristic-function leg and ruinous from the grid solver, which matters for
+anyone deciding whether to buy them. Measured on one machine over $64$ contract
+points, single process, so ratios transfer and seconds do not: analytic
+differentiation through the characteristic-function integrand costs $1.0$ times a
+price call, since one quadrature serves the value and every derivative;
+finite-difference stencils on the transform prices cost $8.4$ times; the
+Monte-Carlo leg $1.9$ times at a tenth of production paths, so roughly $19$ times at
+production; and the Craig--Sneyd solve $688$ times. Read against the
+information-matching plateau, which puts derivative labels at roughly three times
+their value-point budget in finite-difference-equivalent units, labels pay for
+themselves from the cheap leg by a wide margin, and the expensive leg is required
+only for the Feller-stressed band.
+
+
+Table~\ref{tab:tiers} gives the hedging profile at the registered cost tiers with
+the turnover diagnostics, and Table~\ref{tab:dose} the gamma-label dose-response on
+both of its axes. Two features of Table~\ref{tab:tiers} are load-bearing for
+Section~\ref{sec:readout}. At and above the registered tier the best arm is a
+no-trade band applied to the worst delta in the study, and the price-only network
+beats both the supervised arms and the oracle delta, so the cost regime rewards
+under-trading rather than accuracy. No cost-aware supervised arm was run, and the
+paper is therefore silent on what to deploy there. The band width was itself
+selected at the boundary of its registered grid, which is the same
+selection-resolution pattern that Section~\ref{sec:readout} documents for the
+residual weight.
+
+\begin{table}[h]
+\caption{Misspecified delta-only $\mathrm{CVaR}_{95}$ (loss units, lower is better)
+by arm and registered cost tier, combined perturbation, 10 seeds, shared CRN paths.
+Bold marks the best arm in each tier column. Turnover is the per-step mean and
+$T_{\mathrm{ex}}$ the excess turnover over the oracle of \eqref{eq:tex}; both are
+properties of the delta path and are invariant in the cost tier. The price-only row
+is the $\lambda_{\mathrm{pde}} = 0$ baseline of Table~\ref{tab:lambda}. The band
+width $0.04$ is the validation selection on the registered grid
+$\{0.005, 0.01, 0.02, 0.04\}$, which selected at its own upper boundary; $0.08$ is
+the interior optimum of the extended grid, and both are reported. The
+minimum-variance comparator ran at zero cost on 5 seeds, where the oracle reads
+$2.082$ and rung 3 $2.096$ on the same paths.}
+\label{tab:tiers}
+\centering\footnotesize\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Arm & $0\%$ & $1\%$ & $2\%$ & turnover & $T_{\mathrm{ex}}$ \\
+\midrule
+residual-only baseline & $3.052$ & $4.860$ & $6.899$ & $0.0248$ & $-0.695$ \\
+\quad with no-trade band $0.04$ & $3.106$ & $4.591$ & $6.297$ & $0.0157$ & $-1.079$ \\
+\quad with no-trade band $0.08$ & $3.276$ & $\mathbf{4.539}$ & $\mathbf{5.975}$ & $0.0096$ & $-1.336$ \\
+price-only feedforward ($\lambda_{\mathrm{pde}}{=}0$) & $2.137$ & $4.756$ & $7.830$ & $0.0355$ & $-0.213$ \\
+rung 1 ($+\Delta$) & $2.169$ & $4.794$ & $7.980$ & $0.0384$ & $-0.068$ \\
+rung 2 ($+\Delta{+}\Gamma$) & $2.107$ & $4.852$ & $8.201$ & $0.0396$ & $-0.011$ \\
+rung 3 ($+\Delta{+}\Gamma{+}\nu$) & $2.090$ & $4.859$ & $8.219$ & $0.0397$ & $-0.007$ \\
+oracle $\Delta$ & $2.079$ & $4.899$ & $8.287$ & $0.0398$ & $0.000$ \\
+minimum-variance $\Delta$ & $\mathbf{1.670}$ & n/a & n/a & n/a & n/a \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+\caption{Reconstructing the variance-minimising controller from each arm's own two
+first derivatives, misspecified cell, zero cost, five seeds, shared trajectories.
+Lower $\mathrm{CVaR}_{95}$ is better; the comparison column is relative to the
+analytic construction and intervals are the registered pooled paired bootstrap on
+the difference, in loss units. The exact-derivative reference is the controller the
+registered scorecard treats as its ceiling. Exploratory and post-hoc: no registered
+verdict reads this table.}
+\label{tab:mv}
+\centering\footnotesize\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lrrl@{}}
+\toprule
+Fields driving $\Delta_{\mathrm{MV}}$ & $\mathrm{CVaR}_{95}$ & vs.\ analytic & pooled $95\%$ CI \\
+\midrule
+analytic reference & $1.6696$ & n/a & n/a \\
+rung 2 ($+\Delta{+}\Gamma$) & $\mathbf{1.6563}$ & $+0.80\%$ & $[-0.0166, -0.0103]$ \\
+rung 3 ($+\Delta{+}\Gamma{+}\nu$) & $1.6701$ & $-0.03\%$ & $[-0.0013, +0.0021]$ \\
+\texttt{sobolev\_sans\_pde} & $1.6795$ & $-0.59\%$ & $[+0.0082, +0.0116]$ \\
+rung 1 ($+\Delta$) & $1.7243$ & $-3.27\%$ & $[+0.0469, +0.0622]$ \\
+price-only network & $1.7264$ & $-3.40\%$ & $[+0.0497, +0.0637]$ \\
+residual-only baseline & $2.3863$ & $-42.92\%$ & $[+0.6907, +0.7421]$ \\
+\midrule
+exact-derivative reference & $2.0817$ & $-19.77\%$ & $[+0.4025, +0.4206]$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+\caption{Misspecified delta-only $\mathrm{CVaR}_{95}$ (loss units, lower is better)
+by arm and residual weight at the confirmatory cell, 10 seeds, shared CRN paths,
+with the contract's own selection score (mean normalised validation RMSE over
+price, $\Delta$, $\Gamma$, $\nu$; lower is better) and the relative contrast at two
+registered cost tiers. The oracle-$\Delta$ hedger attains $2.0794$ here, and every
+zero-cost contrast is seed-robust with a pooled interval excluding zero. The
+recomputed score reproduces the registered table exactly at both overlapping points
+($0.1757$ at $0$ and $0.1697$ at $10^{-2}$, seed 42), so it is the same criterion
+rather than a proxy.}
+\label{tab:lambda}
+\centering\footnotesize\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+$\lambda_{\mathrm{pde}}$ & selection score & residual-only baseline & rung 3 & effect, $0\%$ & effect, $1\%$ \\
+\midrule
+$0$ (rung-3-sourced row) & $0.1309$ & $2.1370$ & $2.0758$ & $+2.86\%$ & $-3.14\%$ \\
+$10^{-4}$ (criterion optimum) & $\mathbf{0.0820}$ & $2.2434$ & $2.0779$ & $+7.37\%$ & $-5.61\%$ \\
+$3\cdot10^{-4}$ & $0.0861$ & $2.3101$ & $2.0800$ & $+9.96\%$ & $-5.35\%$ \\
+$10^{-3}$ & $0.1039$ & $2.4587$ & $2.0810$ & $+15.36\%$ & $-5.28\%$ \\
+$3\cdot10^{-3}$ & $0.1282$ & $2.6794$ & $2.0905$ & $+21.98\%$ & $-3.78\%$ \\
+$10^{-2}$ (registered) & $0.1773$ & $3.0518$ & $2.0904$ & $+31.50\%$ & $+0.01\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\caption{Gamma-label dose-response, five seeds, misspecified combined cell.
+$\Delta$ and $\nu$ labels are true in every arm and label error is measured against
+the frozen true consensus. The accuracy column is monotone in the dose and the
+hedging columns are not, and the arm with a systematically wrong gamma label hedges
+best. Under the pooled statistic the zero-cost column does degrade in dose order
+($+0.0112$, $+0.0229$, $+0.0432$, intervals excluding zero), none of it seed-robust;
+at the registered tier the same statistic detects an inversion. The catastrophic
+controls destroy the delta fit as well, so they evidence that conflicting labels
+poison training rather than that curvature regularisation substitutes for correct
+labels.}
+\label{tab:dose}
+\centering\footnotesize\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Gamma-label arm & label error & OOD $\Gamma$ relRMSE & $\mathrm{CVaR}_{95}$, $0\%$ & $\mathrm{CVaR}_{95}$, $1\%$ \\
+\midrule
+true labels ($\sigma=0$) & $0.000$ & $0.0446$ & $2.096$ & $4.869$ \\
+$\sigma=0.10$ & $0.100$ & $0.0595$ & $2.106$ & $4.861$ \\
+$\sigma=0.25$ & $0.251$ & $0.0838$ & $2.115$ & $4.858$ \\
+$\sigma=0.50$ & $0.502$ & $0.1475$ & $2.113$ & $4.768$ \\
+Black--Scholes $\Gamma$ & $0.133$ & $0.1878$ & $\mathbf{1.828}$ & $\mathbf{4.671}$ \\
+shuffled labels & $0.990$ & $0.4075$ & $4.869$ & $6.329$ \\
+curvature $L^{2}$ penalty & n/a & $0.9822$ & $6.945$ & $8.000$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{f3_dose_response.png}
+\caption{Gamma-label dose-response on both axes, five seeds, misspecified combined
+cell; error bars are seed standard deviations. Corrupting only the gamma labels
+degrades delivered gamma accuracy monotonically (a) while leaving delta-only
+$\mathrm{CVaR}_{95}$ flat at both registered cost tiers (b, c), and the
+Black--Scholes gamma label, which is wrong by construction, is worst but one on
+accuracy and best on both hedging panels. The shuffled-label and curvature-penalty
+arms are omitted here because they are an order of magnitude off scale on every
+panel; their values are in Table~\ref{tab:dose}.}
+\label{fig:dose}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{f4_mechanism.png}
+\caption{Mechanism at the registered residual weight, misspecified combined cell,
+10 seeds. Left, $\mathrm{CVaR}_{95}$ measured against the oracle-$\Delta$ hedger on
+the same paths, so the zero line is the oracle: the accurate arms track it at every
+cost, while the baseline and the band start far above it and end far below, which is
+the cost inversion. Right, excess turnover at the registered tier: the baseline
+under-trades the oracle and the band under-trades further, so the registered cost
+channel's premise of an over-trading baseline has the sign backwards. The band is
+the baseline's own delta under a no-trade policy, drawn dashed in (a) and hatched in
+(b) for that reason, at the validation-selected width $0.04$.}
+\label{fig:e2}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.66\linewidth]{f5_info_matching.png}
+\caption{Information-matching saturation sweep for the price-only network, five
+seeds. Validation $\Gamma$ relative RMSE against the price-point budget in
+finite-difference-equivalent units, with rung 3's out-of-distribution level marked
+for scale. The plateau rule fires at $m = 3$ at $0.605$, and retraining the
+saturated configuration at twice the width leaves it at $0.709$, so the plateau is
+not an optimisation artifact. It bounds what this architecture and protocol extract
+from prices and is not an information bound in general.}
+\label{fig:info}
+\end{figure}
+
+% =============================================================================
+\section{Oracle validation, mask-neutrality panels, and the headroom ladder}
+\label{app:oracle}
+
+\paragraph{Construction.} The primary leg differentiates the trap-free
+characteristic-function branch of \citet{albrecher2007little}, with Fourier pricing
+per \citet{carrmadan1999option}, before discretisation rather than after; the second
+takes high-order finite differences on the same price grid, the third is Monte-Carlo
+pathwise, and the fourth a Craig--Sneyd ADI solver routed to points where the
+variance process is stressed. The first two share the characteristic-function
+machinery, so the four legs are three independent witnesses at most.
+
+\paragraph{Fourth-leg diagnosis.} On \texttt{feller\_violating\_volvol}, the ADI
+leg's vega disagreed with the characteristic-function leg systematically, exceeding
+it on $87.9\%$ of grid points, growing monotonically in maturity from $0.0$ at
+$\tau = 0.04$ to $0.0087$ at $\tau = 1.0$, and masking $59.4\%$ of that regime's
+vega grid. Four candidate causes were eliminated in order
+(Table~\ref{tab:adi}). The survivor was variance-domain truncation: at the previous
+default the variance domain is cut inside the mass of the $\xi = 0.60$ regime and
+the artificial boundary contaminates $v$-direction derivatives. Raising $v_{\max}$
+from $1.6$ to $3.2$ changes the median disagreement from $4.0\mathrm{e}{-}05$ to
+$2.8\mathrm{e}{-}05$, so $1.6$ is converged, and \texttt{near\_feller} is flat under
+the same sweep, which localises the effect to broad-$\xi$ regimes. The worst
+relative error on the affected regime improved from $3.56\mathrm{e}{-}03$ to
+$1.57\mathrm{e}{-}03$ against a $5\mathrm{e}{-}03$ bar. What adjudicated the
+disagreement was narrower than four legs suggests: the Monte-Carlo band exceeded the
+disagreement on $85\%$ of points and could not break the tie. On that regime the
+vega uncertainty is $1.33$, dominated by Monte-Carlo noise at $\xi = 0.60$ and
+binding on $70\%$ of points, which no solver change lowers.
+
+\begin{table}[h]
+\caption{Elimination sequence for the fourth-leg vega bias.}
+\label{tab:adi}
+\centering\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+Hypothesis & Test & Outcome \\
+\midrule
+Monte-Carlo noise & compare $3\sigma_{\mathrm{MC}}$ to the gap & ruled out; the MC band exceeds the disagreement on $85\%$ of points and cannot adjudicate \\
+Time stepping & $1000 \to 2000 \to 4000$ steps/yr & ruled out; vega identical to six decimals \\
+$v$-grid resolution & $n_v: 241 \to 481$ & ruled out; vega unchanged while gamma improved \\
+Domain truncation & $v_{\max}: 0.8 \to 1.6$ at unchanged $n_v = 241$ & confirmed; vega mask $0.594 \to 0.003$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Mask-neutrality panels.} The Feller-band panel shows the affected band
+halving from $0.5192$ to $0.2434$ while every other band is bit-identical, the
+control confirming that the change touched only the fourth leg. That band remains
+elevated against roughly $0.09$ elsewhere, its excess falling from $5.8\times$ to
+$2.7\times$. The marginal-distribution panel moved in both directions: $\kappa$,
+$\theta$, and $\xi$ improved ($0.0645 \to 0.0287$, $0.1787 \to 0.1201$,
+$0.1284 \to 0.0383$), while $\rho$ and $v_0$ worsened ($0.1242 \to 0.1492$,
+$0.0832 \to 0.1266$). The improvement in $\theta$ and $\xi$ is mechanical, since the
+Feller ratio is $2\kappa\theta/\xi^{2}$ and band-concentrated masking is itself a
+$\theta$ and $\xi$ shift; the deterioration in $\rho$ and $v_0$ follows from the
+masked set shrinking by roughly $12\%$ and changing composition. The fix is
+therefore not a uniform improvement and is not presented as one. The
+curvature-decile panel improved at every decile including the highest
+($0.1221 \to 0.1010$), which is the one that matters for gamma supervision, and the
+contract's stated failure mode for that panel, the mask rate rising with curvature,
+does not occur.
+
+\paragraph{Headroom-gate ladder.} Rungs at
+$\sigma_{\mathrm{rel}} \in \{0.05, 0.10, 0.15\}$ are decision rungs;
+$\{0.20, 0.40\}$ are diagnostic, swept and plotted identically but excluded from the
+decision scan (Table~\ref{tab:ladder}). The bound
+$\texttt{clipped\_frac\_max} = 0.25$ was not raised to re-admit $0.20$, whose
+per-seed maximum straddles it, since a rung whose eligibility depends on which seeds
+were drawn is not a decision rung. The bound is structural rather than statistical:
+above it the corrupted arm is a saturated hedger pinned at the delta bound over much
+of the state space, whose gamma error is the oracle's own $-\Gamma$ rather than the
+calibrated field, and no trained network's Greek error behaves that way. Both pilots
+reported in Section~\ref{sec:method} lie inside the region of validity, at clipped
+fractions of $0.063$ and $0.000$.
+
+\begin{table}[h]
+\caption{Headroom-gate $\sigma$-ladder at production scale, with the amplification
+the delta clip applies to the delivered Greek error. The bound is
+$\texttt{clipped\_frac\_max} = 0.25$; $\sigma_{\mathrm{rel}} = 0.20$ exceeds it on
+3 of 10 seeds and is diagnostic for that reason.}
+\label{tab:ladder}
+\centering\footnotesize\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lllcc@{}}
+\toprule
+$\sigma_{\mathrm{rel}}$ & Role & \texttt{clipped\_frac} mean [min, max] & $\Gamma$ ampl. & $\Delta$ ampl. \\
+\midrule
+$0.05$ & decision & $0.0027$ [$0.0024$, $0.0029$] & $1.00$ & $1.00$ \\
+$0.10$ & decision & $0.0737$ [$0.0712$, $0.0756$] & $1.21$ & $1.05$ \\
+$0.15$ & decision & $0.1484$ [$0.1449$, $0.1516$] & $1.41$ & $1.16$ \\
+$0.20$ & diagnostic & $0.2470$ [$0.2429$, $0.2513$] & $1.54$ & $1.28$ \\
+$0.40$ & diagnostic & $0.8137$ [$0.8102$, $0.8194$] & $1.40$ & $1.34$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% -----------------------------------------------------------------------------
+% The NeurIPS paper checklist is required for the main track. Most workshops do
+% not ask for it; if this one does, drop checklist.tex beside this file and
+% uncomment the two lines below.
+% -----------------------------------------------------------------------------
+% \newpage
+% \input{checklist.tex}
+
+\end{document}

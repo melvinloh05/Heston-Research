@@ -1,0 +1,999 @@
+% =============================================================================
+% Supervising Greeks Improves Greek Accuracy Without Improving Delta-Only
+% Hedging under Misspecified Dynamics
+% NeurIPS 2026 workshop submission (ANONYMOUS).
+%
+% SINGLE SOURCE OF TRUTH FOR DESIGN: heston_benchmark_v6.yaml @ benchmark-v6-frozen.
+% SINGLE SOURCE OF TRUTH FOR RESULTS: results/analysis/registration_ledger.md,
+%   results/analysis/results/tables/{threshold_verdicts,convention_audit,
+%   dose_response}.csv, results/hedging*/, results/eval_greeks_*/,
+%   results/mv_delta/, results/gate*/, results/info_matching/.
+% RULINGS THAT GOVERN CLAIM TEXT: docs/ADJUDICATION_2026-08-18.md.
+%
+% Three sentences this paper MUST NOT contain (ADJUDICATION sec. 7):
+%   1. "Explicit Gamma supervision improves delta-only hedging PnL under
+%      misspecified dynamics."
+%   2. "The improvement operates through the model-uncertainty-robustness
+%      channel" (or the transaction-cost variant).
+%   3. "The confirmatory test would have passed at a correctly calibrated
+%      transaction-cost tier" (any phrasing re-scoring the registered fail).
+% Standing prohibitions: no "complete factorial"; no "any curvature regulariser
+% would do"; no "three independent legs against one"; no claim the ADI fix
+% improved boundary error bars. The 0.575% cost tier is reverse-engineered and
+% appears in NO claim text, caption, or "calibrated range" phrase.
+% =============================================================================
+
+% -----------------------------------------------------------------------------
+% PREAMBLE: PLACEHOLDER. The official NeurIPS workshop style file is not in the
+% project. The geometry below approximates the NeurIPS text block (5.5in x 9in,
+% 10pt). TO SWITCH TO THE REAL TEMPLATE:
+%   1. drop neurips_2026.sty into this directory;
+%   2. delete the \usepackage[...]{geometry} line and the \setlength lines;
+%   3. add \usepackage{neurips_2026}   % anonymous mode is the default
+%   4. re-check the page count: this placeholder is close, not exact.
+% -----------------------------------------------------------------------------
+\documentclass[10pt]{article}
+\usepackage[letterpaper, textwidth=5.5in, textheight=9in]{geometry}
+\setlength{\parindent}{1em}
+\setlength{\parskip}{0pt}
+\usepackage[skip=4pt,font=small]{caption}
+\setlength{\textfloatsep}{9pt}
+\setlength{\intextsep}{9pt}
+\setlength{\floatsep}{9pt}
+\setcounter{topnumber}{3}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{4}
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.7}
+\renewcommand{\textfraction}{0.07}
+\renewcommand{\floatpagefraction}{0.75}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage[authoryear,round]{natbib}
+\bibliographystyle{plainnat}
+
+% Figures are the deterministic exhibits written by exhibits.py. Paths are
+% relative to the repository root; for a standalone submission directory, copy
+% the PNGs and drop the leading directories.
+\graphicspath{{results/exhibits_fullsweep/}{results/exhibits/}{results/info_matching/}}
+
+\title{Supervising Greeks Improves Greek Accuracy Without Improving\\
+Delta-Only Hedging under Misspecified Dynamics}
+
+% -----------------------------------------------------------------------------
+% ANONYMOUS SUBMISSION. CAMERA-READY BLOCK (do not uncomment before acceptance;
+% do not add repository URLs or account names to the main paper):
+%
+% \author{
+%   Melvin Loh \\ Nanyang Technological University \\ \texttt{mloh018@e.ntu.edu.sg}
+%   \And
+%   Prathamesh Dinesh Joshi \\ Vizuara AI Labs \\ \texttt{prathamesh@vizuara.com}
+%   \And
+%   Raj Dandekar \\ Vizuara AI Labs \\ \texttt{raj@vizuara.com}
+% }
+% -----------------------------------------------------------------------------
+\author{Anonymous Author(s) \\ Affiliation withheld for review}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Learned option pricers return Greeks by automatic differentiation, and trading
+desks hedge with those derivatives, yet standard training controls only the price
+in $L^{2}$ and leaves the derivative fields uncontrolled. Theory establishes that
+the discrete-rebalancing hedging error of a surrogate is governed at leading order
+by its gamma, and the trained pricers that supervise gamma evaluate hedging under
+the same process used for training and charge no transaction costs. This paper
+reports the intervening experiment, pre-registered in full before any training run.
+A parametric Heston physics-informed network is trained over a Feller-constrained
+parameter hypercube, and delta-only hedging profit and loss is measured under
+perturbed Heston, Bates, and Merton dynamics with proportional costs charged. A
+supervision ladder attributes the effect by order, a gamma-label-noise
+dose-response separates label correctness from generic smoothing, and a
+pre-registered two-by-two design with an excess-turnover statistic adjudicates the
+mechanism. Qualitatively, derivative supervision delivers large and cleanly
+attributed gains in held-out Greek accuracy that price-only training does not reach
+at any information budget, while the pre-registered hedging claim fails: the
+benefit that exists is carried by first-order supervision, is already present under
+well-specified dynamics, and is exhausted by transaction costs. Quantitatively,
+out-of-distribution gamma and vega relative RMSE fall by $86$ to $93\%$ against the
+residual-only baseline, of which a $60\%$ gamma reduction is attributable to gamma
+labels specifically; the confirmatory CVaR$_{95}$ contrast returns $+0.02\%$
+against a pre-registered $10\%$ bar (10 seeds, pooled $95\%$ CI $[-0.024, +0.024]$
+in loss units), and the add-gamma rung is a significant reversal of $+0.057$
+$[+0.053, +0.062]$. At zero cost the same contrast is $+31.5\%$, of which $28.9$
+of $31.5$ percentage points come from delta supervision and $27.2$ are present
+in-model.
+\end{abstract}
+
+% =============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Once a learned pricer produces a value, automatic differentiation delivers $\Delta$,
+$\Gamma$, and vega in the same forward pass, so the derivatives of the learned
+surface are traded quantities rather than diagnostics. Standard training
+nevertheless controls only the price in $L^{2}$, permitting a network to fit prices
+closely while the slope of its hedge ratio remains noisy or biased. Supervising
+derivatives is established practice: differential machine learning trains on values
+together with pathwise algorithmic-adjoint differentials
+\citep{huge2020differential}, the financial instance of Sobolev training on
+derivative norms \citep{czarnecki2017sobolev}. A second fact compounds the first.
+The pricer is always trained under a model that is wrong, since the world is not
+Heston \citep{heston1993closed}, so the field a desk trades is a wrong-model Greek
+evaluated on paths the model did not generate.
+
+Both ends of the literature name the resulting gap without closing it. On the
+theory side, \citet{noguer2026derivative} proves that the discrete-rebalancing
+hedging error of a surrogate is governed at leading order by its gamma
+(Thms.~2--3, Prop.~3) and shows that first-order supervision does not reliably
+control a held-out second-order Greek; that paper contains no hedging experiment,
+and its stochastic-volatility experiments use a fixed-random-feature ridge
+surrogate rather than a trained pricer. On the practice side, DeepSVM
+\citep{chakhoyan2025deepsvm} reaches the same diagnosis from the residual end: a
+physics-informed operator network attains low residual loss on the parametric
+Heston problem yet reports oscillatory deltas and locally negative gammas near the
+money, finds that a soft gamma-positivity penalty neither stabilised the learned
+Greeks nor preserved pricing accuracy, and identifies explicit Sobolev
+regularisation as a necessary direction. The nearest trained configuration,
+\citet{sakuma2026a}, supervises $\Delta$, $\Gamma$, and vega alongside a PIDE
+residual, but evaluates hedging under the same well-specified process used for
+training and charges no transaction costs, obtaining nearly indistinguishable
+profit-and-loss distributions across arms. Two mechanisms are live and left
+unseparated. Under the model-uncertainty channel, accurate curvature copes with the
+gap between assumed and realised dynamics, the account \citet{armstrong2024deep}
+give at the level of strategy choice while holding Greeks analytic. Under the
+transaction-cost channel, accurate gamma yields smoother, lower-turnover delta
+paths. Whether second-order supervision improves the hedging decision under
+misspecification, and through which mechanism, has not been tested.
+
+This paper reports that test. A parametric Heston physics-informed network with
+inputs $(S, K, \tau, \kappa, \theta, \xi, \rho, v_0)$ is trained over a
+Feller-constrained hypercube so that held-out-parameter claims are coherent, and
+delta-only hedging is evaluated when the pricer is trained under one
+data-generating process and deployed under another. The primary evidence is
+held-out hedging profit and loss with costs charged rather than Greek RMSE, which
+cannot answer the question: in-domain it measures fit to the same labels used for
+training, in-model it is invisible to hedging outcomes, and cross-model it is
+dominated by a model-bias term identical across arms. The entire acceptance block,
+including the direction-free mechanism falsifier, was frozen in
+\texttt{heston\_benchmark\_v6.yaml} before any training run, and an oracle-headroom
+diagnostic established before training that the design could resolve a gamma error
+of the baseline's measured size and could not resolve one of the supervised arm's
+size. All reported contrasts carry both the registered pooled path-level bootstrap
+statistic and its per-seed companion, and the two are never conflated.
+
+The pre-registered confirmatory test failed, and the failure is reported first and
+unhedged. The contributions are consequently as follows. (i) A causal design for
+Greek supervision, comprising a supervision ladder from price to ${+}\Delta$ to
+${+}\Delta{+}\Gamma$ to ${+}\Delta{+}\Gamma{+}\nu$ under otherwise identical arms, a
+residual\,$\times$\,supervision factorial, a gamma-label-noise dose-response, and a
+pre-registered mechanism adjudication with both outcomes and the null committed as
+publishable in advance. (ii) A held-out Greek-accuracy result with clean ladder
+attribution: out-of-distribution $\Gamma$ and $\nu$ relative RMSE fall by $86$ to
+$93\%$, the $\Gamma$ component is attributable to gamma labels, and an
+information-matched price-only baseline plateaus far above it, so the gain is not
+reachable by spending more price data. (iii) A pre-registered null on the hedging
+side, with the add-gamma rung a significant reversal at the registered cost tier,
+together with the evidence that separates its causes: the residual-only baseline
+under-trades relative to the oracle by $38\%$, supervision restores oracle-level
+turnover and pays for it once costs are charged, and the effect that supervision
+does deliver is present without misspecification. (iv) Two design findings, namely
+that the registered mechanism menu was incomplete and that the design's own
+in-model consistency cell detected the omission, and that a Black--Scholes gamma
+label produces a better delta-only hedger than exact Greeks, which a
+minimum-variance-delta comparator explains.
+
+% =============================================================================
+\section{Methodology}
+\label{sec:method}
+
+\subsection{Learned surface, supervision objective, and arms}
+\label{sec:loss}
+Under the risk-neutral Heston model \citep{heston1993closed}, the European-call
+price $C(S,v,\tau)$ in time-to-maturity $\tau$ solves
+\begin{equation}\label{eq:hestonpde}
+\partial_\tau C=\tfrac12 vS^{2}\partial_{SS}C+\rho\xi vS\,\partial_{Sv}C
++\tfrac12\xi^{2}v\,\partial_{vv}C+(r-q)S\,\partial_{S}C
++\kappa(\theta-v)\,\partial_{v}C-rC,
+\end{equation}
+with $C(S,v,0)=(S-K)^{+}$, where the variance follows a square-root process of
+mean-reversion rate $\kappa$, level $\theta$, and volatility of volatility $\xi$,
+correlated with the spot at $\rho$. One parametric surface
+$C_\phi(S,K,\tau;\vartheta)$, $\vartheta=(\kappa,\theta,\xi,\rho,v_0)$, is trained
+over all eight inputs, the initial-variance input $v_0$ serving as the variance
+coordinate. Greeks are obtained by automatic differentiation:
+$\Delta=\partial_S C_\phi$, $\Gamma=\partial_{SS}C_\phi$, the variance vega
+$\nu=\partial_{v_0}C_\phi$, and vanna $\partial^2_{S v_0}C_\phi$, the last
+supervised only in an optional arm and otherwise a diagnostic. The squared residual
+of \eqref{eq:hestonpde} on collocation points defines
+$\mathcal{L}_{\mathrm{pde}}$ \citep{raissi2019physics}. Every arm is a flag setting
+of one loss,
+\begin{equation}\label{eq:loss}
+\mathcal{L}=\mathcal{L}_{\mathrm{price}}
++\lambda_{\mathrm{pde}}\mathcal{L}_{\mathrm{pde}}
++\lambda_{\mathrm{bc}}\mathcal{L}_{\mathrm{bc}}
++\lambda_{D}\mathcal{L}_{D}+\lambda_{G}\mathcal{L}_{G}
++\lambda_{\nu}\mathcal{L}_{\nu}
+\;\bigl[+\lambda_{\mathrm{vanna}}\mathcal{L}_{\mathrm{vanna}}\bigr],
+\end{equation}
+where $\mathcal{L}_{D},\mathcal{L}_{G},\mathcal{L}_{\nu}$ are scale-normalised
+mean-squared errors of $\partial_S C_\phi$, $\partial_{SS}C_\phi$,
+$\partial_{v_0}C_\phi$ against oracle labels. The gamma normalisation is frozen from
+the true consensus so that every dose-response arm shares one scale. Weights are
+selected on validation data only, with the test set locked in code. The unsupervised
+baseline is the standard Heston PINN of \citet{hainaut2024option}. Terminal-condition
+treatment is held identical across all arms, since hard-constrained ansatz
+constructions \citep{lagaris1998artificial} embed the payoff kink into every
+derivative field at all maturities and any asymmetry there would confound the
+supervision effect. Table~\ref{tab:arms} lists the arms.
+
+\begin{table}[!htbp]
+\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lccccl@{}}
+\toprule
+Arm & PDE & $\Delta$ & $\Gamma$ & $\nu$ & Role \\
+\midrule
+price-only feedforward & -- & -- & -- & -- & supervision-OFF, residual-OFF cell \\
+information-matched price-only & -- & -- & -- & -- & data-side saturation control \\
+standard PINN (rung 0) & \checkmark & -- & -- & -- & Hainaut--Casas baseline \\
+rung 1 ($+\Delta$) & \checkmark & \checkmark & -- & -- & differential-ML rung \\
+rung 2 ($+\Delta{+}\Gamma$) & \checkmark & \checkmark & \checkmark & -- & registered causal rung \\
+rung 3 ($+\Delta{+}\Gamma{+}\nu$) & \checkmark & \checkmark & \checkmark & \checkmark & main arm \\
+\texttt{sobolev\_sans\_pde} & -- & \checkmark & \checkmark & \checkmark & residual-OFF, supervision-ON cell \\
+\midrule
+$\sigma\in\{0.10,0.25,0.50\}$, shuffled, BS-$\Gamma$ & \checkmark & \checkmark & noisy & \checkmark & label-correctness dose-response \\
+curvature $L^{2}$ penalty & \checkmark & -- & -- & -- & label-free regulariser reference \\
+\bottomrule
+\end{tabular}
+\caption{Arms. One model class, flags only, identical architecture
+($4\times64$ tanh, $13{,}121$ parameters), sampling, terminal treatment, and
+compute budget ($20{,}000$ steps). Five seeds per arm, ten at the confirmatory
+pair. Only gamma labels are corrupted in the dose-response; $\Delta$ and $\nu$
+labels remain true.}
+\label{tab:arms}
+\end{table}
+
+\subsection{Oracle, training distribution, and evaluation splits}
+\label{sec:oracle}
+Labels and hedging references derive from the trap-free characteristic-function
+branch of \citet{albrecher2007little} with Fourier pricing per
+\citet{carrmadan1999option}, differentiated before discretisation rather than after,
+and cross-validated against high-order finite differences on the price grid, a
+Monte-Carlo leg, and a Craig--Sneyd ADI leg on Feller-stressed points. Legs (i) and
+(ii) share the characteristic-function machinery and are not independent witnesses.
+Points where legs disagree above tolerance are masked under a rule declared
+pre-training and subjected to three neutrality checks; the panels, including two
+marginals that worsened after the ADI leg was corrected, are in
+Appendix~\ref{app:oracle}. Table~\ref{tab:config} collects the settings.
+
+Per-regime training would make the held-out-parameter Greek leg incoherent, since
+the three named Heston regimes share $\kappa=2.0$ and $\rho=-0.50$ exactly, so a
+network trained only on them receives no gradient signal in those directions.
+Held-out evaluation therefore has two tiers: \texttt{near\_feller} is interpolation
+with its ball excised, and \texttt{strong\_neg\_corr} at $\rho=-0.90$ lies beyond
+the sampled range, the realised minimum being $\rho=-0.7989$, so the extrapolation
+is literal. Both tiers receive Greek-accuracy and hedging metrics; cross-model
+transfer is hedging-only.
+
+\begin{table}[!htbp]
+\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lp{0.66\linewidth}@{}}
+\toprule
+Component & Setting \\
+\midrule
+Inputs, sampling & $(S, K, \tau, \kappa, \theta, \xi, \rho, v_0)$; Latin hypercube over $\kappa\in[1,4]$, $\theta\in[0.02,0.12]$, $\xi\in[0.20,0.60]$, $\rho\in[-0.80,-0.20]$, $v_0\in[0.01,0.12]$, rejecting Feller ratio $<0.40$ and excising $10\%$-radius balls around every named anchor. Realised: Feller $\geq 0.4061$, minimum $\rho=-0.7989$ \\
+Labels & $512$ parameter points $\times\,64$ $(S,K,\tau)$ giving $23{,}623$ train and $5{,}936$ validation rows against the $5N$ floor, mask rate $0.098$ \\
+Oracle & CF, FD, and MC legs at $10^{-3}$ relative tolerance, plus Craig--Sneyd ADI on Feller-stressed points at the shipped defaults ($n_v{=}481$, $v_{\max}{=}1.6$); $7/7$ certification gates pass \\
+Hedge & delta-only, ATM call $S_0{=}K{=}100$, $\tau_0{=}0.25$, held to $T'{=}0.17$; 43 steps at $\Delta t = 0.003953488$ ($252.94$/yr); $10{,}000$ paths per cell from shared CRN banks; registered costs $\{0,1\%,2\%\}$ \\
+Misspecification & $\xi{\uparrow}0.45$, $\rho{\downarrow}{-}0.80$, and their combination; Bates severity sweep and one Merton cell. Confirmatory cell: combined perturbation, $1\%$ cost, rung~3 against the standard PINN, 10 seeds \\
+Metric roles & primary: misspecified delta-only $\mathrm{CVaR}_{95}$, held-out only. Falsifier: $T_{\mathrm{ex}}$ of \eqref{eq:tex}. Secondary: out-of-distribution $\Gamma$ and $\nu$ RMSE. Sanity: price RMSE, in-domain Greek RMSE, and in-model hedging \\
+\bottomrule
+\end{tabular}
+\caption{Configuration and metric roles, abridged; Appendix~\ref{app:config} gives
+the full frozen contract.}
+\label{tab:config}
+\end{table}
+
+\subsection{Hedging backtest, mechanism adjudication, and thresholds}
+\label{sec:hedge}
+The strategy is pure delta hedging of the underlying, held fixed across arms so that
+Greek estimation quality is the only varying factor; an option leg would let
+instrument-level costs dominate and confound the mechanism
+\citep{armstrong2024deep}. Profit and loss is self-financing, every arm pays the same
+oracle premium at the training parameters, the terminal liability is marked at the
+true-DGP price at $T'$, and with $L=-\mathrm{PnL}$ the reported statistic is
+$\mathrm{CVaR}_{95}$, the mean of the worst $5\%$. Three competitors are run: a
+Monte-Carlo-Greek hedger; the oracle-$\Delta$ hedger as the ceiling defining the
+fraction of the gap closed; and a smoothed baseline applying a pure no-trade band to
+the standard PINN's delta, the classical proportional-cost policy class
+\citep{whalley1997asymptotic}, with band width chosen on validation cells. The
+mechanism falsifier is excess turnover over the oracle on identical paths,
+\begin{equation}\label{eq:tex}
+T_{\mathrm{ex}}
+=\sum_i\bigl|\Delta\hat{\Delta}_i\bigr|
+-\sum_i\bigl|\Delta\Delta^{\circ}_i\bigr|,
+\end{equation}
+so that $T_{\mathrm{ex}}<0$ denotes an arm that trades less than the oracle.
+Channel adjudication uses a pre-registered $2\times2$ crossing
+$\{\theta_{\mathrm{test}}=\theta_{\mathrm{train}},\,\neq\}$ with
+$\{\kappa_{\mathrm{tc}}=0,\,>0\}$: a gap already present at zero cost indicates the
+robustness channel; a gap near zero at zero cost that widens with cost while
+$T_{\mathrm{ex}}$ falls indicates the cost channel; an unmoved $T_{\mathrm{ex}}$
+rejects the cost channel whatever the profit and loss shows; neither anywhere is the
+pre-registered null. The in-model, zero-cost corner must reproduce the no-gap result
+of \citet{sakuma2026a} within $2\%$ as a consistency check that is not pass or fail.
+
+Verdicts distinguish three states, recorded separately in every table and figure. A
+pass or a fail is a contrast evaluated against its threshold; a \emph{null} means the
+artifact was legitimately absent and the evaluation was not attempted; an
+\emph{error} means the evaluation was attempted and failed. Merging the last two
+would let a broken run read as an absence of effect. Every contrast reports two
+uncertainties, which answer different questions and are never substituted for one
+another: the registered pooled stratified paired bootstrap over the shared
+common-random-number path banks, which asks whether the trained hedgers differ on
+this path population, and the per-seed companion interval, which asks whether the
+treatment replicates across training runs. Language reserved for generalisation
+requires the second. The acceptance block, reproduced verbatim in
+Appendix~\ref{app:thresholds} with its dated amendment record, requires a
+$\geq10\%$ relative $\mathrm{CVaR}_{95}$ improvement with a paired-bootstrap
+interval excluding zero at the confirmatory cell; rung~2 to beat rung~1 at that
+cell; demonstrated monotonicity in the dose-response; and out-of-distribution
+$\Gamma$ and $\nu$ RMSE each to fall by $\geq15\%$ at price parity within $10\%$.
+
+Before any arm trained, an oracle-headroom diagnostic hedged the confirmatory
+instrument with oracle Greeks and under an anisotropic, spot-dominated corruption
+field alongside an amplitude-matched independent comparator, requiring every seed's
+paired interval to exclude zero. Because the delta clip amplifies the delivered
+gamma error across the decision band, by factors of $1.00$, $1.21$, and $1.41$ at
+nominal $\sigma_{\mathrm{rel}}\in\{0.05,0.10,0.15\}$, pilots are compared against
+the effective rather than the nominal gamma sigma. At the residual-only baseline's
+own measured gamma error ($\sigma_{\mathrm{rel}}=0.0929$, effective
+$\sigma_\Gamma=4.51\times10^{-3}$, clipped fraction $0.063$, inside the region of
+validity) the spread was $+100.8\%$, $+37.5\%$, and $+16.0\%$ at the three
+registered cost tiers, clearing the $10\%$ bar in every seed. At the supervised
+arm's measured gamma error ($\sigma_\Gamma=1.25\times10^{-4}$) no tier cleared, the
+spread being $+2.5\%$, $+0.44\%$, and $+0.08\%$. The design therefore had headroom
+to detect an error of the baseline's size and none to detect an error of the treated
+arm's size, which is the correct frame for the hedging results below.
+
+% =============================================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Pre-registered outcomes}
+\label{sec:reg}
+
+Table~\ref{tab:verdicts} reports every registered endpoint against its frozen
+threshold. The confirmatory test fails. At the registered cell the relative
+$\mathrm{CVaR}_{95}$ improvement of rung~3 over the standard PINN is $+0.02\%$
+against a $10\%$ bar, with a pooled interval covering zero and a per-seed interval
+covering zero, so the contrast is neither pooled-significant nor seed-robust. The
+order-attribution endpoint also fails, and its failure is not a null: the add-gamma
+rung is a reversal of $+0.0574$ in loss units, pooled interval $[+0.0527,+0.0621]$
+and per-seed interval $[+0.0311,+0.0856]$, both excluding zero on the harmful side.
+Its relative size, $-1.2\%$, sits below any economic-relevance floor, so the correct
+reading is that gamma supervision is significantly but negligibly harmful at that
+cell rather than inert. The registered outcome vocabulary, which admits only
+``passes'' and ``failure equals honest null'', cannot express a significant
+reversal; that is a defect of the vocabulary and is recorded as such.
+
+\begin{table}[!htbp]
+\centering\footnotesize\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}llrlc@{}}
+\toprule
+Registered endpoint & Cell & Statistic & Pooled $95\%$ CI & Verdict \\
+\midrule
+Confirmatory $\mathrm{CVaR}_{95}$, rung 3 vs.\ PINN & combined, $1\%$, 10 seeds & $+0.02\%$ & $[-0.0242,+0.0242]$ & \textbf{fail} \\
+Order attribution, rung 2 vs.\ rung 1 & combined, $1\%$, 10 seeds & $+0.0574$ & $[+0.0527,+0.0621]$ & \textbf{fail} (reversal) \\
+Dose-response monotonicity & combined, $1\%$, 5 seeds & $\rho_S=0.029$ & $P(\rho_S\le0)=0.074$ & \textbf{not demonstrated} \\
+OOD $\Gamma$/$\nu$ RMSE at price parity & rung 3, both OOD regimes & $0.864$ & $[0.859,0.868]$ & \textbf{fail} (parity guard) \\
+In-model consistency, rung 3 vs.\ oracle & in-model, $0\%$, 10 seeds & $+0.35\%$ & $[-0.0073,-0.0050]$ & consistent \\
+Mechanism reading & combined, cost sweep & $-0.9624$ & $[-0.9804,-0.9443]$ & channel (i) \\
+Bates severity, decision-relevant regime & severity sweep, $1\%$ & $+0.311$ & $[+0.283,+0.339]$ & no decisive regime \\
+\bottomrule
+\end{tabular}
+\caption{Pre-registered endpoints against frozen thresholds. Statistics are
+relative improvements where a percentage is shown and $\mathrm{CVaR}_{95}$
+differences in loss units otherwise, with negative differences favouring the
+treated arm. Confidence intervals are the registered pooled stratified paired
+bootstrap over shared CRN paths; per-seed companions are given in the text. The
+$\Gamma$ and $\nu$ reductions clear their $15\%$ bars by roughly six times and the
+endpoint fails on the conjoined price-parity guard alone, which is coded two-sided
+and rejects the arm for improving price relative RMSE by $82$ to $91\%$.}
+\label{tab:verdicts}
+\end{table}
+
+Two registered outcomes require their direction stated. The out-of-distribution
+Greek endpoint fails on its price-parity conjunct rather than on accuracy:
+$\Gamma$ reduction is $0.894$ at \texttt{near\_feller} and $0.864$ at
+\texttt{strong\_neg\_corr}, $\nu$ reduction is $0.927$ and $0.930$, against a
+registered floor of $0.15$, while the parity term
+$\mathrm{relRMSE}_{\mathrm{arm}}/\mathrm{relRMSE}_{\mathrm{base}}-1$ equals $-0.908$
+and $-0.821$ and is scored against a two-sided tolerance of $0.10$. The clause as
+written rejects an arm for improving the price by nine tenths, and the same clause
+admits an arm trained on half-destroyed gamma labels. The registered verdict stands
+as a fail and the defect is reported, not repaired after the fact. Second, the
+in-model consistency cell was registered against the wrong contrast. The comparison
+in \citet{sakuma2026a} is between true deltas and a delta-supervised network, whose
+translation here is rung~3 against the oracle in-model; that contrast returns
+$+0.35\%$, inside the registered $2\%$ negligibility band, so the null reproduces.
+The coded contrast, rung~3 against the residual-only baseline, tests something that
+was never run in the source and returns a $27.2\%$ gap. The check flagged, and what
+it detected was a fact about the baseline, examined in Section~\ref{sec:mech}.
+
+\subsection{Attribution and Greek accuracy}
+\label{sec:attr}
+
+Table~\ref{tab:tiers} gives the hedging profile. At zero cost, supervision closes
+$98.9\%$ of the distance from the residual-only baseline to the oracle-$\Delta$
+hedger, and the ladder attributes that $31.5\%$ improvement as $28.9$ percentage
+points to $+\Delta$, $2.0$ to $+\Gamma$, and $0.5$ to $+\nu$. The effect decays
+monotonically as the proportional cost rises, crosses zero near the registered $1\%$
+tier, and is a significant harm at $2\%$. The tiers below $1\%$ were added after the
+registered verdict was known and are reported as a post-hoc sensitivity analysis
+throughout; they change no registered verdict. Their interest is external: the rate
+\citet{armstrong2024deep} calibrate for the underlying leg, the only leg a
+delta-only hedger trades, is $0.005\%$, at which the effect is $+31.3\%$ and
+indistinguishable from frictionless, while their high-cost stress tier of $0.5\%$
+gives $+14.5\%$. At and above the registered tier the ranking inverts and the
+winner is the no-trade band applied to the worst delta in the study, which at $1\%$
+attains $4.591$ against rung~3's $4.859$ and the oracle's $4.899$. The cost regime
+rewards cost-awareness rather than accuracy, and no cost-aware supervised arm was
+run, so the paper is silent on what to deploy there.
+
+\begin{table}[!htbp]
+\centering\footnotesize\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+& \multicolumn{1}{c}{reg.} & \multicolumn{3}{c}{post-hoc tiers} & \multicolumn{2}{c}{registered} & & \\
+\cmidrule(lr){2-2}\cmidrule(lr){3-5}\cmidrule(lr){6-7}
+Arm & $0\%$ & $0.005\%$ & $0.25\%$ & $0.5\%$ & $1\%$ & $2\%$ & turnover & $T_{\mathrm{ex}}$ \\
+\midrule
+standard PINN (rung 0) & $3.052$ & $3.061$ & $3.493$ & $3.940$ & $4.860$ & $6.899$ & $0.0248$ & $-0.696$ \\
+\quad + no-trade band ($0.04$) & $3.106$ & $3.113$ & $3.466$ & $3.832$ & $\mathbf{4.591}$ & $\mathbf{6.297}$ & $0.0157$ & $-1.079$ \\
+rung 1 ($+\Delta$) & $2.169$ & $2.180$ & $2.760$ & $3.394$ & $4.794$ & $7.980$ & $0.0385$ & $-0.068$ \\
+rung 2 ($+\Delta{+}\Gamma$) & $2.107$ & $2.118$ & $2.711$ & $3.372$ & $4.852$ & $8.201$ & $0.0396$ & $-0.011$ \\
+rung 3 ($+\Delta{+}\Gamma{+}\nu$) & $2.090$ & $2.102$ & $2.700$ & $3.367$ & $4.859$ & $8.219$ & $0.0397$ & $-0.007$ \\
+oracle $\Delta$ (ceiling) & $\mathbf{2.079}$ & $\mathbf{2.091}$ & $\mathbf{2.700}$ & $\mathbf{3.367}$ & $4.899$ & $8.287$ & $0.0398$ & $0.000$ \\
+\midrule
+rung 3 vs.\ rung 0, relative & $+31.5\%$ & $+31.3\%$ & $+22.7\%$ & $+14.5\%$ & $+0.02\%$ & $-19.1\%$ & & \\
+\bottomrule
+\end{tabular}
+\caption{Misspecified delta-only $\mathrm{CVaR}_{95}$ (loss units, lower is
+better) by arm and proportional cost, combined perturbation, 10 seeds, shared CRN
+banks. Turnover is the per-step mean and $T_{\mathrm{ex}}$ the excess turnover over
+the oracle of \eqref{eq:tex}; both are properties of the delta path and are
+invariant in the cost tier. Bold marks the best arm in each tier column. The $1\%$ and $2\%$ tiers and the
+zero-cost tier are registered; the intermediate tiers were added after the
+registered verdict was observed and are a sensitivity analysis, not a re-scoring.
+The fraction of the baseline-to-oracle gap closed is well defined only where the
+oracle beats the baseline, that is below roughly $0.5\%$; at zero cost it is
+$0.908$, $0.972$, and $0.989$ for rungs 1 to 3.}
+\label{tab:tiers}
+\end{table}
+
+The accuracy side behaves differently, and it is where gamma supervision earns its
+place. Table~\ref{tab:greeks} shows that each rung of the ladder buys held-out Greek
+accuracy, that the add-gamma rung specifically cuts out-of-distribution $\Gamma$
+relative RMSE by about $60\%$ on both held-out regimes ($0.1375\to0.0549$ and
+$0.0953\to0.0383$), and that price accuracy improves monotonically alongside, so
+nothing is traded away. The information-matched price-only baseline is the control
+that makes this a statement about labels rather than about data volume: growing its
+price budget on finite-difference-equivalent stencils, validation $\Gamma$ relative
+RMSE plateaus at $0.605$ under the registered $2\%$ rule at $m=3$, and retraining
+the saturated configuration at twice the width leaves it flat at $0.709$, so the
+plateau is not an optimisation artifact. Its out-of-distribution $\Gamma$ relative
+RMSE, $0.699$ and $0.615$, is more than an order of magnitude above rung~3's. This
+bounds what this architecture and protocol extract from prices and is not an
+information bound in general.
+
+\begin{table}[!htbp]
+\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Arm & price & $\Delta$ & $\Gamma$ & $\nu$ & vanna \\
+\midrule
+standard PINN (rung 0) & $0.0155/0.0128$ & $0.0749/0.0616$ & $0.4096/0.3505$ & $0.3551/0.3411$ & $0.7059/0.6278$ \\
+price-only feedforward & $0.0328/0.0318$ & $0.1229/0.1183$ & $0.2664/0.2206$ & $0.2054/0.1325$ & $0.5522/0.4092$ \\
+information-matched & $0.0716/0.0559$ & $0.2108/0.2001$ & $0.6986/0.6147$ & $0.7220/0.6953$ & $0.9725/0.9525$ \\
+rung 1 ($+\Delta$) & $0.0023/0.0026$ & $0.0148/0.0115$ & $0.1375/0.0953$ & $0.0952/0.0793$ & $0.2964/0.2295$ \\
+rung 2 ($+\Delta{+}\Gamma$) & $0.0022/0.0025$ & $0.0047/0.0049$ & $0.0549/0.0383$ & $0.0570/0.0587$ & $0.1319/0.1087$ \\
+rung 3 ($+\Delta{+}\Gamma{+}\nu$) & $\mathbf{0.0014}/\mathbf{0.0022}$ & $\mathbf{0.0038}/0.0055$ & $0.0446/0.0498$ & $\mathbf{0.0260}/\mathbf{0.0238}$ & $0.1028/\mathbf{0.0977}$ \\
+\texttt{sobolev\_sans\_pde} & $0.0046/0.0047$ & $0.0149/0.0156$ & $\mathbf{0.0410}/0.0697$ & $0.0291/0.0264$ & $0.0905/0.0985$ \\
+\bottomrule
+\end{tabular}
+\caption{Held-out out-of-distribution Greek relative RMSE, reported as
+\texttt{near\_feller}/\texttt{strong\_neg\_corr}, five seeds, full evaluation grid.
+Lower is better; bold marks the best arm per column and regime. The residual-only
+baseline and the two price-only arms never see a derivative label. Rung 3 improves
+$\Gamma$ and $\nu$ by $86$ to $93\%$ over the baseline while improving price by
+$82$ to $91\%$.}
+\label{tab:greeks}
+\end{table}
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\linewidth]{e1_ladder_factorial.png}
+\caption{Supervision ladder and the residual\,$\times$\,supervision factorial at
+the confirmatory cell, with the held-out Greek-accuracy panel. The hedging and
+accuracy axes move independently: the ladder is monotone in Greek accuracy and is
+not monotone in hedging $\mathrm{CVaR}_{95}$ once costs are charged.}
+\label{fig:e1}
+\end{figure}
+
+The residual term is not the source of either result. With Greek labels present,
+removing the PDE residual entirely moves misspecified zero-cost
+$\mathrm{CVaR}_{95}$ by $-0.0047$ in loss units, pooled interval $[-0.0068,-0.0025]$
+and per-seed interval covering zero, that is a pooled-significant difference of
+about $0.2\%$ in favour of the residual-free arm that is not seed-robust and is
+below any economic-relevance floor. On out-of-distribution Greeks the residual-free
+arm is better on $\Gamma$ at one regime and worse at the other. In the opposite
+direction, the price-only feedforward network, which has neither residual nor
+derivative labels, hedges better than the residual-only baseline at zero cost
+($2.153$ against $3.080$, five seeds) while being worse than it on
+out-of-distribution $\Delta$ relative RMSE. Both directions are reported and no
+global direction is claimed for the residual main effect.
+
+\subsection{Mechanism, label correctness, and the minimum-variance comparator}
+\label{sec:mech}
+
+The registered rule returns channel (i), because the gap is present at zero cost
+with an interval excluding zero, does not widen with cost in the direction of
+improvement, and is not accompanied by a reduction in $T_{\mathrm{ex}}$. The
+registered \emph{interpretation} of that reading, model-uncertainty robustness, is
+not supported by the design's own cells, and the cell that detects this is the
+in-model consistency corner the pre-registration required. Of the $31.5\%$ zero-cost
+effect under combined misspecification, $27.2\%$ is already present under
+well-specified dynamics, so roughly $86\%$ of the effect requires no
+misspecification at all. Under increasing misspecification the effect decays rather
+than grows: across the Bates severity sweep at zero cost it falls monotonically from
+$+27.7\%$ at zero jump intensity to $-4.2\%$ at the most severe cell, and the single
+Merton cell gives $+9.8\%$ at zero cost and $-3.7\%$ at $1\%$. Mean profit and loss
+is identical across arms at zero cost, at $+0.0773$, so the entire gap is tail
+dispersion rather than drift.
+
+The turnover evidence rejects the cost channel and does so with the opposite sign to
+the one the falsifier anticipated. The registered falsifier presumed a noisy,
+over-trading baseline whose turnover accurate curvature would reduce. The measured
+baseline under-trades: its turnover is $0.0248$ against the oracle's $0.0398$, or
+$62\%$ of oracle, with $T_{\mathrm{ex}}=-0.696$, because its delta is systematically
+damped. Supervision restores oracle-level turnover, rung~3 reaching
+$T_{\mathrm{ex}}=-0.007$, and the difference $T_{\mathrm{ex}}(\text{rung
+3})-T_{\mathrm{ex}}(\text{rung 0})=+0.689$ has a per-seed interval $[+0.662,+0.715]$
+excluding zero on the increasing side. Turnover therefore moved, and it moved
+upward, so the cost mechanism operates against the treatment rather than for it. The
+operative account consistent with every cell is that supervision improves the
+approximation quality of the delta field and thereby reduces discrete-hedge tracking
+error, which is a channel outside the registered menu, is the object
+\citet{noguer2026derivative} bounds in theory, and is reported here as a design
+finding: the menu was incomplete in both of its entries, and the pre-registered
+consistency cell detected the omission.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=\linewidth]{e2_mechanism.png}
+\caption{Mechanism panel. Left, $\mathrm{CVaR}_{95}$ against proportional cost by
+arm; centre, $T_{\mathrm{ex}}$ against the oracle; right, the pre-registered
+$2\times2$ crossing specification with cost. The zero-cost gap is present in-model,
+the cost slope is positive, and $T_{\mathrm{ex}}$ moves upward under supervision.}
+\label{fig:e2}
+\end{figure}
+
+Table~\ref{tab:dose} separates label correctness from smoothing on two axes that
+answer differently. On the accuracy axis the dose-response is monotone:
+out-of-distribution $\Gamma$ relative RMSE degrades in dose order across
+$\sigma\in\{0,0.10,0.25,0.50\}$ and further at the structurally wrong endpoints, so
+gamma-label correctness controls delivered gamma accuracy. On the registered hedging
+axis monotonicity is not demonstrated. Under the pooled statistic the zero-cost
+$\mathrm{CVaR}_{95}$ does degrade in dose order, by $+0.0112$, $+0.0229$, and
+$+0.0432$ with intervals excluding zero, returning between half and seventy percent
+of the small $\Gamma$ and $\nu$ increment; none of these is seed-robust, and for
+dose arms the seed carries the frozen noise realisation, so the per-seed interval is
+the generalisation-relevant one. At the registered $1\%$ tier the same statistic
+detects an inversion. The biased points dominate both readings. A Black--Scholes
+gamma label at matched implied volatility, which is wrong by construction, produces
+the best hedger in the study at zero cost, beating true labels by $-0.267$
+$[-0.272,-0.261]$ and beating the exact-Greek oracle hedger in-model by $-0.156$
+$[-0.164,-0.147]$. The label-free curvature penalty and the shuffled-label arm are
+catastrophic on both axes, and the shuffled arm destroys the delta fit as well, so
+they evidence that conflicting labels poison training rather than that curvature
+regularisation substitutes for correct labels. The honest statement is that
+gamma-label correctness monotonically improves delivered gamma accuracy while
+delta-only $\mathrm{CVaR}_{95}$ at any tested tier does not reward it.
+
+\begin{table}[!htbp]
+\centering\footnotesize\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Gamma-label arm & label error & OOD $\Gamma$ relRMSE & $\mathrm{CVaR}_{95}$, $0\%$ & $\mathrm{CVaR}_{95}$, $1\%$ \\
+\midrule
+true labels ($\sigma=0$) & $0.000$ & $0.0446$ & $2.096$ & $4.869$ \\
+$\sigma=0.10$ & $0.100$ & $0.0595$ & $2.106$ & $4.861$ \\
+$\sigma=0.25$ & $0.251$ & $0.0838$ & $2.115$ & $4.858$ \\
+$\sigma=0.50$ & $0.502$ & $0.1475$ & $2.113$ & $4.768$ \\
+Black--Scholes $\Gamma$ & $0.133$ & $0.1878$ & $\mathbf{1.828}$ & $\mathbf{4.671}$ \\
+shuffled labels & $0.990$ & $0.4075$ & $4.869$ & $6.329$ \\
+curvature $L^{2}$ penalty & n/a & $0.9822$ & $6.945$ & $8.000$ \\
+\bottomrule
+\end{tabular}
+\caption{Gamma-label dose-response, five seeds, misspecified combined cell.
+Delta and vega labels are true in every arm. Label error is measured against the
+frozen true consensus; out-of-distribution $\Gamma$ relative RMSE is at
+\texttt{near\_feller}. The accuracy column is monotone in the dose and the hedging
+columns are not, and the arm with a systematically wrong gamma label hedges best.}
+\label{tab:dose}
+\end{table}
+
+That anomaly has an explanation, and it is the one new phenomenon in the record.
+Hedging the same path banks with the Heston minimum-variance delta,
+$\Delta_{\mathrm{MV}}=\partial_S C+(\rho\xi/S)\,\partial_v C$, which corrects the
+pure spot derivative for the correlated variance move, gives in-model zero-cost
+$\mathrm{CVaR}_{95}$ of $1.562$ against the exact-delta oracle's $1.741$, rung~3's
+$1.737$, and the Black--Scholes-gamma arm's $1.586$, over five seeds on identical
+paths. Exact-delta tracking is therefore measurably suboptimal for discrete
+$\mathrm{CVaR}_{95}$ hedging under these dynamics, the minimum-variance correction
+recovers the difference, and the biased arm recovers $87\%$ of it. The
+Black--Scholes-gamma advantage is thus not evidence that cheap labels suffice for
+Greek accuracy, where they plainly do not, but evidence that the registered hedging
+metric rewards proximity to the minimum-variance delta rather than proximity to the
+exact one. This also retro-explains the dose-response result, and it is reported as
+an observed and now partly explained phenomenon rather than as a claim about
+optimal hedging in general.
+% [CITATION NEEDED] The minimum-variance / local-risk-minimization delta belongs to
+% the Foellmer-Schweizer family. That reference is NOT in the project record and is
+% deliberately not cited until obtained and read (ADJUDICATION open item 2).
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.86\linewidth]{e3_dose_response_cb.png}
+\caption{Gamma-label-noise dose-response on the registered hedging axis
+(colourblind-safe palette). The unbiased-noise arms are flat relative to their
+accuracy degradation and the biased Black--Scholes-gamma point sits below the
+true-label arm, which is the ordering the registered criterion cannot express.}
+\label{fig:e3}
+\end{figure}
+
+% =============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+This study asked whether explicit supervision of the derivative of the hedge ratio
+improves delta-only hedging under misspecified dynamics beyond first-order
+supervision, and through which channel. The pre-registered answer is a failure, and
+it is reported as one: at the confirmatory cell the improvement is $+0.02\%$ against
+a $10\%$ bar with an interval covering zero, and the rung on which the claim was
+placed is a small significant reversal. What survives is different in kind. Sobolev
+supervision improves held-out out-of-distribution $\Gamma$ and $\nu$ accuracy by
+$86$ to $93\%$, with a $60\%$ $\Gamma$ reduction attributable to gamma labels
+specifically and unreachable by information-matched price-only training, while the
+hedging benefit that exists, $+31.5\%$ at zero cost with ten seeds and an interval
+excluding zero, is carried by delta supervision, is present without
+misspecification, decays with transaction costs, and vanishes at the registered
+tier. Three findings follow from the design rather than from the treatment: the
+registered mechanism menu omitted the tracking channel that the evidence supports
+and inverted the sign of the cost channel's premise, and the pre-registered in-model
+consistency cell detected both; a no-trade band on the study's worst delta beats
+every accurate arm once costs reach $1\%$; and a systematically biased
+Black--Scholes gamma label produces a better delta-only hedger than exact Greeks,
+which a minimum-variance-delta comparator largely explains.
+
+Five limitations bound these claims. The zero-cost headline is a property of this
+baseline's damped delta at this residual weight and this architecture, and
+generalises only to baselines with comparable pathology. The registered robustness
+row at the alternative residual weight was not run, which is outstanding
+registration debt. The dose-response, the residual-free arm, the feedforward arm,
+and the minimum-variance comparator carry five seeds rather than ten. No cost-aware
+supervised arm was run, so the paper is silent on deployment above the crossing
+point. Misspecification is synthetic throughout. The natural next experiments follow
+directly: dose the label bias rather than its variance, add a higher-frequency
+rebalancing cell in which the discretisation term the theory identifies actually
+binds, and pair every accurate arm with a cost-aware policy.
+
+% =============================================================================
+\begin{thebibliography}{99}
+
+\bibitem[Albrecher et~al.(2007)]{albrecher2007little}
+Albrecher, H., Mayer, P., Schoutens, W., and Tistaert, J. (2007).
+\newblock The little Heston trap.
+\newblock \emph{Wilmott Magazine}, January 2007, 83--92.
+
+\bibitem[Armstrong and Tatlow(2024)]{armstrong2024deep}
+Armstrong, J. and Tatlow, G. (2024).
+\newblock Deep gamma hedging.
+\newblock arXiv:2409.13567.
+
+\bibitem[Carr and Madan(1999)]{carrmadan1999option}
+Carr, P. and Madan, D.~B. (1999).
+\newblock Option valuation using the fast Fourier transform.
+\newblock \emph{Journal of Computational Finance}, 2(4):61--73.
+% [VERIFY] Page range not confirmed against the original; author/year/venue/issue are.
+
+\bibitem[Chakhoyan et~al.(2025)]{chakhoyan2025deepsvm}
+Chakhoyan, H., Kalici, S., and Malandain, K.~A. (2025).
+\newblock DeepSVM: Learning stochastic volatility models with physics-informed
+deep operator networks.
+\newblock arXiv:2512.07162.
+
+\bibitem[Czarnecki et~al.(2017)]{czarnecki2017sobolev}
+Czarnecki, W.~M., Osindero, S., Jaderberg, M., \'Swirszcz, G., and Pascanu, R. (2017).
+\newblock Sobolev training for neural networks.
+\newblock In \emph{Advances in Neural Information Processing Systems (NeurIPS)}, volume 30.
+
+\bibitem[Hainaut and Casas(2024)]{hainaut2024option}
+Hainaut, D. and Casas, A. (2024).
+\newblock Option pricing in the Heston model with physics inspired neural networks.
+\newblock \emph{Annals of Finance}, 20(3):353--376.
+% [VERIFY] Volume/pages taken from DeepSVM's reference [7]; confirm against the
+% published paper.
+
+\bibitem[Heston(1993)]{heston1993closed}
+Heston, S.~L. (1993).
+\newblock A closed-form solution for options with stochastic volatility with
+applications to bond and currency options.
+\newblock \emph{The Review of Financial Studies}, 6(2):327--343.
+
+\bibitem[Huge and Savine(2020)]{huge2020differential}
+Huge, B. and Savine, A. (2020).
+\newblock Differential machine learning.
+\newblock arXiv:2005.02347.
+
+\bibitem[Lagaris et~al.(1998)]{lagaris1998artificial}
+Lagaris, I., Likas, A., and Fotiadis, D. (1998).
+\newblock Artificial neural networks for solving ordinary and partial
+differential equations.
+\newblock \emph{IEEE Transactions on Neural Networks}, 9(5):987--1000.
+
+\bibitem[Noguer i Alonso(2026)]{noguer2026derivative}
+Noguer i Alonso, M. (2026).
+\newblock Derivative-informed operator learning for finance: On-the-fly Greeks,
+surfaces, hedging, and control.
+\newblock arXiv:2606.05900.
+
+\bibitem[Raissi et~al.(2019)]{raissi2019physics}
+Raissi, M., Perdikaris, P., and Karniadakis, G.~E. (2019).
+\newblock Physics-informed neural networks: A deep learning framework for solving
+forward and inverse problems involving nonlinear partial differential equations.
+\newblock \emph{Journal of Computational Physics}, 378:686--707.
+
+\bibitem[Sakuma(2026)]{sakuma2026a}
+Sakuma, T. (2026).
+\newblock Differential machine learning for 0DTE options with stochastic
+volatility and jumps.
+\newblock arXiv:2603.07600.
+
+\bibitem[Whalley and Wilmott(1997)]{whalley1997asymptotic}
+Whalley, A.~E. and Wilmott, P. (1997).
+\newblock An asymptotic analysis of an optimal hedging model for option pricing
+with transaction costs.
+\newblock \emph{Mathematical Finance}, 7(3):307--324.
+
+\end{thebibliography}
+
+% NOTE ON THE BIBLIOGRAPHY: the previous draft carried a longer related-work
+% bibliography (Buhler, Giles-Glasserman, Frandsen, Fu-Hirsa, Gobet-Makhlouf,
+% Broden-Wiktorsson, Kennedy, Leland, Lu, O'Leary-Roseberry, Yao, Zhang,
+% Aboussalah, Bansal, Sun, Armstrong-Ionescu). Those entries are retained in
+% updated.tex and should be restored if the related-work discussion is expanded
+% back into its own section. Sakuma (2026b), "Robust hedging valuation adjustment
+% under liquidity-demand stress", is DELIBERATELY DROPPED: the project record does
+% not contain that paper, so every sentence that leaned on it was unverified
+% (ADJUDICATION preamble).
+
+\section*{Declaration of AI-assisted technologies}
+The authors used generative AI and AI-assisted tools for manuscript drafting,
+language refinement, and code drafting and debugging. The authors directed the
+project, reviewed and verified the manuscript, the code, and all reported results,
+and take full responsibility for the final manuscript.
+% NOTE: check the workshop's AI-assistance policy. Some NeurIPS workshops require
+% this as a checklist entry rather than a section.
+
+\appendix
+\section{Pre-registered acceptance block and amendment record}
+\label{app:thresholds}
+The block below is reproduced byte-for-byte from
+\texttt{heston\_benchmark\_v6.yaml} at tag \texttt{benchmark-v6-frozen}, frozen
+before any training run. Amendments adopted after the freeze and before any result
+was observed are recorded in Table~\ref{tab:amendments}; where an amendment
+supersedes a line of the block, the amended text governs, and the superseded
+original is retained rather than overwritten.
+
+\begin{lstlisting}[basicstyle=\ttfamily\tiny,breaklines=true,breakatwhitespace=true,keepspaces=true,columns=fullflexible,postbreak=\mbox{$\hookrightarrow$\space},breakindent=1.5em]
+acceptance_thresholds:
+  confirmatory_cell_pass: "misspec delta CVaR95 improvement >=10% relative AND paired-bootstrap 95% CI excludes 0 (combined,1% TC,baseline,rung3 vs standard_pinn)"
+  headline_scale_free: fraction_of_baseline_to_oracle_gap_closed
+  order_attribution: "rung2 beats rung1 at the cell, CI excludes 0; failure = honest null"
+  dose_response: "monotone (isotonic + rank correlation); flat = regularization null"
+  ood_gamma_rmse_reduction_min: 0.15
+  ood_vega_rmse_reduction_min: 0.15           # Greek-accuracy leg
+  price_parity_within: 0.10
+  mechanism_falsifier: "0%-TC gap => robustness (i); zero-at-0% widening + T_ex->0 => cost (ii); T_ex unmoved rejects (ii). Both publishable. STATE BEFORE RESULTS."
+  in_model_hedging: NOT_PASS_FAIL             # = (in-model x cost) 2x2 corner; must reproduce Sakuma null
+  seeds: {default: 5, confirmatory_cell: 10}
+  tail_claim_requires: paired_bootstrap_over_CRN_paths_with_seed_variance_separated
+\end{lstlisting}
+
+\begin{table}[h]
+\centering\footnotesize
+\begin{tabular}{@{}llp{0.56\linewidth}@{}}
+\toprule
+ID & Date & Amendment \\
+\midrule
+Q1 & & Rebalancing recorded as 43 steps at $\Delta t = 0.003953488$ ($252.94$/yr). $T'=0.17$ does not divide evenly into $1/252$ steps, so ``daily at $1/252$'' is superseded \\
+Q2 & & \texttt{dose\_response}: a non-monotone curve is reported as monotonicity not demonstrated. The phrase ``flat = regularization null'' in the block above is superseded. The accompanying statistic is a one-sided seed-bootstrap tail probability, not a classical $p$-value \\
+AM2-2 & & \texttt{null} (artifact legitimately absent, evaluation not attempted) and \texttt{error} (evaluation attempted and failed) are distinct verdicts, never merged \\
+AM3 & & Headroom gate reclassified as a diagnostic bounding the detectable effect. A pilot above \texttt{clipped\_frac\_max} $=0.25$ is inconclusive and authorises no training spend; decision and diagnostic $\sigma$-ladders separated; extension contingency defined. Declared deviations: anisotropic spot-dominated corruption with an amplitude-matched independent comparator, and a per-seed rather than pooled CI decision rule \\
+AM3-1 & & The delta clip amplifies the delivered Greek error, so pilots are compared against the effective gamma sigma; comparison against nominal is anti-conservative \\
+4 & & Fourth-leg grid settings promoted to function defaults ($n_v = 481$, $v_{\max} = 1.6$); certification and as-run configurations agree, $7/7$ gates pass \\
+\bottomrule
+\end{tabular}
+\caption{Amendments adopted after the freeze and before any result was observed.
+Dates are filled from the signed amendment record at camera-ready. Labels are frozen
+at tag \texttt{v6-labels-20260812}.}
+\label{tab:amendments}
+\end{table}
+
+\paragraph{Registered defects found by the results, and not repaired after the fact.}
+Four registered instruments returned faithful outputs of mis-specified rules, and
+all four are reported as failures with the defect stated rather than re-scored.
+(i) The order-attribution vocabulary admits only a pass and an ``honest null'' and
+cannot express the significant reversal that occurred. (ii) The out-of-distribution
+Greek endpoint conjoins a two-sided price-parity guard whose evident purpose is
+one-sided, so it fails an arm for improving price and admits an arm trained on
+half-destroyed labels. (iii) The in-model consistency cell was mapped to a contrast
+the source paper never ran; on the correct contrast the null reproduces. (iv) The
+mechanism falsifier presumed an over-trading baseline, and the measured baseline
+under-trades, so the cost channel is rejected for the opposite reason to the one
+the rule anticipated. The scale-free headline metric is additionally undefined at
+the registered tier, since it presupposes that the oracle beats the baseline, which
+holds only below roughly $0.5\%$ cost.
+
+\section{Full configuration}
+\label{app:config}
+
+\begin{table}[h]
+\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lp{0.66\linewidth}@{}}
+\toprule
+Component & Setting \\
+\midrule
+Network, training & $(S, K, \tau, \kappa, \theta, \xi, \rho, v_0)$ inputs; 4 hidden layers of width 64, tanh, float32, $13{,}121$ parameters; $20{,}000$ steps, $4{,}096$ collocation points per step, $\lambda_{\mathrm{pde}}=0.01$ selected on validation from \texttt{standard\_pinn}, $\lambda_D=\lambda_G=\lambda_\nu=1$, loss terms scale-normalised by label second moment with the gamma scale frozen from the true consensus \\
+Parameter sampling & Latin hypercube (declared, seeded); $\kappa\in[1,4]$, $\theta\in[0.02,0.12]$, $\xi\in[0.20,0.60]$, $\rho\in[-0.80,-0.20]$, $v_0\in[0.01,0.12]$ \\
+Feller constraint & reject $2\kappa\theta/\xi^{2}<0.40$; $10\%$-radius balls excised around every named anchor. Realised: Feller ratio $\geq 0.4061$, all five anchor balls excised with $2.3$ to $3.7\times$ margin, minimum sampled $\rho = -0.7989$ \\
+$(S,K,\tau)$ grid & $41\times33\times16$; $S\in[50,150]$, $K\in[60,140]$, $\tau\in[0.04,1]$; $r=0.02$, $q=0$, European calls \\
+Oracle legs & (i) autodiff through the trap-free CF; (ii) high-order finite differences on the CF price grid; (iii) Monte-Carlo pathwise and likelihood-ratio. Legs (i) and (ii) share the characteristic-function machinery and are not independent \\
+Fourth leg & Craig--Sneyd ADI on \texttt{near\_feller}, \texttt{feller\_violating\_volvol}, and any point with Feller ratio in $[0.40,0.60)$, at $n_x{=}901$, $n_v{=}481$, $x_{\max}{=}4.0$, $v_{\max}{=}1.6$, $1000$ steps/yr, $c_x{=}0.05$ \\
+Tolerance, masking & $10^{-3}$ relative agreement; pairs involving the MC leg use $\mathrm{tol_{rel}}\cdot\mathrm{scale} + 3\sigma_{\mathrm{MC}}$ \\
+Frozen labels & $512$ parameter points $\times\,64$ $(S,K,\tau)$: $23{,}623$ train and $5{,}936$ validation rows against the $5N = 20{,}480$ floor ($+15.3\%$), overall mask rate $0.098$ \\
+Strategy, instrument & delta-only in the underlying and cash, fixed across arms; at-the-money European call, $S_0{=}K{=}100$, $\tau_0{=}0.25$ \\
+Horizon, rebalancing & hedge to $T'{=}0.17$ and liquidate; 43 steps at $\Delta t=0.003953488$ ($252.94$ per year), fixed across arms \\
+Paths, costs & $10{,}000$ per cell from common-random-number banks shared by all arms; proportional cost on traded notional, registered tiers $\{0, 1\%, 2\%\}$ \\
+Cross-model & Bates sweep ($\lambda_j\in\{0,0.1,0.25,0.5\}$, $\mu_j{=}-0.10$, $\sigma_j\in\{0.05,0.10,0.15\}$) and one Merton cell \\
+Competitors & Monte-Carlo-Greek hedger; oracle-$\Delta$ ceiling; no-trade-band smoothed baseline, band $0.04$ selected on validation cells from the registered grid $\{0.005,0.01,0.02,0.04\}$; minimum-variance-delta oracle (post-hoc) \\
+Seeds & 5 per arm, 10 at the confirmatory cell and on every contrast in Table~\ref{tab:tiers} \\
+\bottomrule
+\end{tabular}
+\caption{Frozen configuration in full.}
+\label{tab:configfull}
+\end{table}
+
+\section{Oracle validation, mask-neutrality panels, and the headroom ladder}
+\label{app:oracle}
+
+\paragraph{Fourth-leg diagnosis.} On \texttt{feller\_violating\_volvol}, the ADI
+leg's vega disagreed with the characteristic-function leg systematically, exceeding
+it on $87.9\%$ of grid points, growing monotonically in maturity from $0.0$ at
+$\tau = 0.04$ to $0.0087$ at $\tau = 1.0$, and masking $59.4\%$ of that regime's vega
+grid. Four candidate causes were eliminated in order (Table~\ref{tab:adi}). The
+survivor was variance-domain truncation: at the previous default the variance domain
+is cut inside the mass of the $\xi = 0.60$ regime and the artificial boundary
+contaminates $v$-direction derivatives. Raising $v_{\max}$ from $1.6$ to $3.2$
+changes the median disagreement from $4.0\mathrm{e}{-}05$ to $2.8\mathrm{e}{-}05$,
+so $1.6$ is converged, and \texttt{near\_feller} is flat under the same sweep, which
+localises the effect to broad-$\xi$ regimes. The worst relative error on the affected
+regime improved from $3.56\mathrm{e}{-}03$ to $1.57\mathrm{e}{-}03$ against a
+$5\mathrm{e}{-}03$ bar. What adjudicated the disagreement was narrower than four legs
+suggests: the Monte-Carlo band exceeded the disagreement on $85\%$ of points and
+could not break the tie. On that regime the vega uncertainty is $1.33$, dominated by
+Monte-Carlo noise at $\xi = 0.60$ and binding on $70\%$ of points, which no solver
+change lowers.
+
+\begin{table}[h]
+\centering\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+Hypothesis & Test & Outcome \\
+\midrule
+Monte-Carlo noise & compare $3\sigma_{\mathrm{MC}}$ to the gap & ruled out; the MC band exceeds the disagreement on $85\%$ of points and cannot adjudicate \\
+Time stepping & $1000 \to 2000 \to 4000$ steps/yr & ruled out; vega identical to six decimals \\
+$v$-grid resolution & $n_v: 241 \to 481$ & ruled out; vega unchanged while gamma improved \\
+Domain truncation & $v_{\max}: 0.8 \to 1.6$ at unchanged $n_v = 241$ & confirmed; vega mask $0.594 \to 0.003$ \\
+\bottomrule
+\end{tabular}
+\caption{Elimination sequence for the fourth-leg vega bias.}
+\label{tab:adi}
+\end{table}
+
+\paragraph{Mask-neutrality panels.} The Feller-band panel shows the affected band
+halving from $0.5192$ to $0.2434$ while every other band is bit-identical, the
+control confirming that the change touched only the fourth leg. That band remains
+elevated against roughly $0.09$ elsewhere, its excess falling from $5.8\times$ to
+$2.7\times$. The marginal-distribution panel moved in both directions: $\kappa$,
+$\theta$, and $\xi$ improved ($0.0645 \to 0.0287$, $0.1787 \to 0.1201$,
+$0.1284 \to 0.0383$), while $\rho$ and $v_0$ worsened ($0.1242 \to 0.1492$,
+$0.0832 \to 0.1266$). The improvement in $\theta$ and $\xi$ is mechanical, since the
+Feller ratio is $2\kappa\theta/\xi^{2}$ and band-concentrated masking is itself a
+$\theta$ and $\xi$ shift; the deterioration in $\rho$ and $v_0$ follows from the
+masked set shrinking by roughly $12\%$ and changing composition. The fix is
+therefore not a uniform improvement and is not presented as one. The
+curvature-decile panel improved at every decile including the highest
+($0.1221 \to 0.1010$), which is the one that matters for gamma supervision, and the
+contract's stated failure mode for that panel, the mask rate rising with curvature,
+does not occur.
+
+\paragraph{Headroom-gate ladder.} Rungs at $\sigma_{\mathrm{rel}} \in
+\{0.05, 0.10, 0.15\}$ are decision rungs; $\{0.20, 0.40\}$ are diagnostic, swept and
+plotted identically but excluded from the decision scan (Table~\ref{tab:ladder}).
+The bound $\texttt{clipped\_frac\_max} = 0.25$ was not raised to re-admit $0.20$,
+whose per-seed maximum straddles it, since a rung whose eligibility depends on which
+seeds were drawn is not a decision rung. The bound is structural rather than
+statistical: above it the corrupted arm is a saturated hedger pinned at the delta
+bound over much of the state space, whose gamma error is the oracle's own $-\Gamma$
+rather than the calibrated field, and no trained network's Greek error behaves that
+way. Both pilots reported in Section~\ref{sec:hedge} lie inside the region of
+validity, at clipped fractions of $0.063$ and $0.000$.
+
+\begin{table}[h]
+\centering\footnotesize\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lllcc@{}}
+\toprule
+$\sigma_{\mathrm{rel}}$ & Role & \texttt{clipped\_frac} mean [min, max] & $\Gamma$ ampl. & $\Delta$ ampl. \\
+\midrule
+$0.05$ & decision & $0.0027$ [$0.0024$, $0.0029$] & $1.00$ & $1.00$ \\
+$0.10$ & decision & $0.0737$ [$0.0712$, $0.0756$] & $1.21$ & $1.05$ \\
+$0.15$ & decision & $0.1484$ [$0.1449$, $0.1516$] & $1.41$ & $1.16$ \\
+$0.20$ & diagnostic & $0.2470$ [$0.2429$, $0.2513$] & $1.54$ & $1.28$ \\
+$0.40$ & diagnostic & $0.8137$ [$0.8102$, $0.8194$] & $1.40$ & $1.34$ \\
+\bottomrule
+\end{tabular}
+\caption{Headroom-gate $\sigma$-ladder at production scale, with the amplification
+the delta clip applies to the delivered Greek error. The bound is
+$\texttt{clipped\_frac\_max} = 0.25$; $\sigma_{\mathrm{rel}} = 0.20$ exceeds it on
+3 of 10 seeds and is diagnostic for that reason.}
+\label{tab:ladder}
+\end{table}
+
+\section{Supporting exhibits}
+\label{app:exhibits}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.92\linewidth]{e4_decomposition.png}
+\caption{Decomposition exhibit: (a) fraction of the oracle gap closed, well defined
+only where the oracle beats the baseline; (b) cost against directional components of
+profit and loss; (c) vanna accuracy; (d) the no-trade band against supervision in
+cost and tracking-risk coordinates.}
+\label{fig:e4}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.72\linewidth]{saturation_curve.png}
+\caption{Information-matching saturation sweep for the price-only baseline.
+Validation $\Gamma$ relative RMSE against the price-point budget in
+finite-difference-equivalent units. The plateau rule fires at $m=3$ with mean
+$\Gamma$ relative RMSE $0.605$, and retraining the saturated configuration at twice
+the width leaves it flat at $0.709$. The plateau bounds what this architecture and
+protocol extract from prices and is not an information bound.}
+\label{fig:info}
+\end{figure}
+
+\end{document}

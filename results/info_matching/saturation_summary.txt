@@ -1,0 +1,7 @@
+Information-matching saturation sweep for `info_matched_baseline` (price-only baseline). Growing the price-point budget m x N and scoring validation Gamma rel-RMSE, the plateau rule (smallest m>=2 with < 2% mean-Gamma-RMSE gain over m-1) is reached at m = 3 (mean Gamma rel-RMSE 0.605).
+
+Capacity control: retraining the saturated m=3 config at 2x width gives mean Gamma rel-RMSE 0.7087 vs 0.605 (-17.1%); still flat at 2x width (< 2% gain) — the optimization-limited objection dies.
+
+Budget reported both ways (fd_equivalent is the headline): fd_equivalent (5-pt stencil) and raw_scalar (4 labels/rung3-point) resolution versions are in saturation_curve.csv.
+
+Interpretation (contract wording, verbatim): "plateau bounds what THIS architecture/protocol extracts from prices, NOT an information bound".

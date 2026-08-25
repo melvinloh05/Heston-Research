@@ -38,6 +38,18 @@ ARM_SET = [("standard_pinn", "standard_pinn"), ("rung2", "rung2_delta_gamma"),
 ENGINE_ARMS = [e for e, _ in ARM_SET]
 SEEDS = [0, 1]
 
+# midpoint of the contract's hedging box, read from the contract (never a literal) so
+# every fake anchor grid carries a tau node inside it
+def _hedge_tau_mid() -> float:
+    import yaml as _yaml
+
+    from eval_greeks import hedge_slice_spec
+    sp = hedge_slice_spec(_yaml.safe_load(open(CONTRACT)))
+    return 0.5 * (sp["tau_lo"] + sp["tau_hi"])
+
+
+_HEDGE_TAU_MID = _hedge_tau_mid()
+
 # regime params in HESTON_PARAM_NAMES order (kappa, theta, xi, rho, v0)
 REGIME_PARAMS = {
     "baseline": [2.0, 0.04, 0.30, -0.50, 0.04],
@@ -61,8 +73,11 @@ def _fake_grid(path, params, *, seed=0, mask_points=(), poison=False,
     reader binds by NAME."""
     S_ax = np.linspace(50.0, 150.0, nS)
     K_ax = np.linspace(60.0, 140.0, nK)
-    T_ax = np.linspace(0.04, 1.0, nT)
-    shape = (nS, nK, nT)
+    # The tau axis carries one node INSIDE the contract's hedging box so the "hedge"
+    # slice (CODE_AUDIT_2026-08-20 action 1) is non-empty on every fixture grid; a
+    # coarse linspace over [0.04, 1.0] straddles the box without ever landing in it.
+    T_ax = np.unique(np.concatenate([np.linspace(0.04, 1.0, nT), [_HEDGE_TAU_MID]]))
+    shape = (nS, nK, T_ax.size)
     rng = np.random.default_rng(seed)
     mask_any = np.zeros(shape, bool)
     for pt in mask_points:
@@ -133,8 +148,11 @@ def test_masked_points_excluded_from_every_metric(provider, tmp_path):
                         seed=5, mask_points=mp, poison=True)   # masked cells -> NaN consensus
     mc = eval_arm_on_regime(provider, clean, "baseline")
     mp_ = eval_arm_on_regime(provider, poison, "baseline")
+    # derived from the grid, not a literal: _fake_grid's tau axis carries an extra
+    # node inside the contract's hedging box, so a hardcoded cell count would rot
+    n_cells = int(np.load(clean)["mask_any"].size)
     for g in GREEKS:
-        assert mc[g]["n_unmasked"] == 4 * 3 * 3 - len(mp)
+        assert mc[g]["n_unmasked"] == n_cells - len(mp)
         for k in ("rmse", "rel_rmse", "p50", "p90", "p95", "p99", "oracle_unc_rms"):
             assert np.isfinite(mc[g][k]), (g, k)                # no NaN leaked from masked pts
             # poisoning a MASKED point changes nothing (it is never read)
@@ -302,3 +320,117 @@ def test_threshold_precheck_present_for_ladder_arms(result):
         # price_parity_within_0.10 -> price_parity_within_tol
         assert r["pass"] == (r["gamma_ge_min"] and r["vega_ge_min"]
                              and r["price_parity_within_tol"])
+
+
+# ---------------------------------------------------------------------------
+# hedging-box slice (CODE_AUDIT_2026-08-20 action 1)
+# ---------------------------------------------------------------------------
+
+def test_hedge_slice_spec_is_contract_derived():
+    """Every bound of the hedging box comes from the contract, none is a literal."""
+    import yaml as _yaml
+
+    from eval_greeks import WING_HI, WING_LO, hedge_slice_spec
+    cfg = _yaml.safe_load(open(CONTRACT))
+    sp = hedge_slice_spec(cfg)
+    hs = cfg["hedging_simulation"]
+    assert sp["K"] == float(hs["instrument"]["K"])
+    assert sp["tau_hi"] == pytest.approx(float(hs["instrument"]["tau0"]))
+    assert sp["tau_lo"] == pytest.approx(float(hs["instrument"]["tau0"])
+                                         - float(hs["horizon"]["T_prime"]))
+    assert (sp["moneyness_lo"], sp["moneyness_hi"]) == (WING_LO, WING_HI)
+    # the box is the maturities the hedge actually walks, inception -> liquidation
+    assert 0.0 < sp["tau_lo"] < sp["tau_hi"]
+
+
+def test_hedge_slice_mask_selects_exactly_the_hedging_box(tmp_path):
+    """The mask is K == hedged strike, tau in [tau0-T', tau0], body moneyness only."""
+    import yaml as _yaml
+
+    from eval_greeks import _slice_masks, hedge_slice_spec
+    cfg = _yaml.safe_load(open(CONTRACT))
+    sp = hedge_slice_spec(cfg)
+    # a grid that straddles the box on every axis
+    S_ax = np.array([50.0, 80.0, 100.0, 120.0, 150.0])
+    K_ax = np.array([60.0, sp["K"], 140.0])
+    T_ax = np.array([0.04, sp["tau_lo"], 0.5 * (sp["tau_lo"] + sp["tau_hi"]),
+                     sp["tau_hi"], 1.0])
+    p = tmp_path / "g.npz"
+    shape = (S_ax.size, K_ax.size, T_ax.size)
+    arr = {"S_axis": S_ax, "K_axis": K_ax, "tau_axis": T_ax,
+           "params": np.asarray(REGIME_PARAMS["baseline"], float),
+           "param_names": np.array(HESTON_PARAM_NAMES),
+           "mask_any": np.zeros(shape, bool),
+           "r": np.float64(R), "q": np.float64(Q), "seed": np.int64(0)}
+    for g in GREEKS:
+        arr[f"consensus_{g}"] = np.ones(shape)
+        arr[f"uncertainty_{g}"] = np.full(shape, 0.01)
+        arr[f"mask_{g}"] = np.zeros(shape, bool)
+    np.savez(p, **arr)
+
+    m = _slice_masks(str(p), cfg)["hedge"].reshape(shape)
+    Sg, Kg, Tg = np.meshgrid(S_ax, K_ax, T_ax, indexing="ij")
+    want = ((Kg == sp["K"]) & (Tg >= sp["tau_lo"] - 1e-12) & (Tg <= sp["tau_hi"] + 1e-12)
+            & (Sg / Kg >= sp["moneyness_lo"]) & (Sg / Kg <= sp["moneyness_hi"]))
+    assert m.any(), "hedging box must be non-empty on a grid that contains it"
+    np.testing.assert_array_equal(m, want)
+    # the three exclusions actually bite
+    assert not m[:, 0, :].any() and not m[:, 2, :].any()      # wrong strike
+    assert not m[:, :, 0].any() and not m[:, :, -1].any()     # tau outside the hedge's life
+    assert not m[0, 1, :].any()                               # S/K = 0.5 is a wing point
+
+
+def test_hedge_slice_snaps_strike_to_nearest_grid_node(tmp_path):
+    """A grid whose K axis misses the hedged strike still yields a non-empty box."""
+    import yaml as _yaml
+
+    from eval_greeks import _slice_masks, hedge_slice_spec
+    cfg = _yaml.safe_load(open(CONTRACT))
+    sp = hedge_slice_spec(cfg)
+    K_ax = np.array([sp["K"] - 3.0, sp["K"] + 7.0])          # nearest node is K-3
+    S_ax = np.array([90.0, 100.0])
+    T_ax = np.array([0.5 * (sp["tau_lo"] + sp["tau_hi"])])
+    p = tmp_path / "g2.npz"
+    shape = (S_ax.size, K_ax.size, T_ax.size)
+    arr = {"S_axis": S_ax, "K_axis": K_ax, "tau_axis": T_ax,
+           "params": np.asarray(REGIME_PARAMS["baseline"], float),
+           "param_names": np.array(HESTON_PARAM_NAMES),
+           "mask_any": np.zeros(shape, bool),
+           "r": np.float64(R), "q": np.float64(Q), "seed": np.int64(0)}
+    for g in GREEKS:
+        arr[f"consensus_{g}"] = np.ones(shape)
+        arr[f"uncertainty_{g}"] = np.full(shape, 0.01)
+        arr[f"mask_{g}"] = np.zeros(shape, bool)
+    np.savez(p, **arr)
+    m = _slice_masks(str(p), cfg)["hedge"].reshape(shape)
+    assert m.any()
+    assert m[:, 1, :].sum() == 0                              # only the nearest node
+    assert m[:, 0, :].any()
+
+
+def test_hedge_slice_cannot_move_a_registered_verdict(result):
+    """The registered OOD threshold reads slice == 'full' ONLY.
+
+    The hedging box is reported alongside it; adding the slice must leave every
+    threshold row bit-identical, or the audit's reporting fix would have silently
+    become a re-scoring of a pre-registered endpoint.
+    """
+    from eval_greeks import _threshold_rows
+    thresholds = {"ood_gamma_reduction_min": 0.15, "ood_vega_reduction_min": 0.15,
+                  "price_parity_within": 0.10}
+    agg = result["primary_agg"]
+    assert any(r["slice"] == "hedge" for r in agg), "hedge slice missing from primary agg"
+    with_box = _threshold_rows(agg, result["primary_regimes"], ENGINE_ARMS, thresholds)
+    without = _threshold_rows([r for r in agg if r["slice"] != "hedge"],
+                              result["primary_regimes"], ENGINE_ARMS, thresholds)
+    assert with_box == without
+
+
+def test_hedge_slice_is_reported_for_primary_regimes(result):
+    """Both regions are emitted for every primary regime/arm/seed/greek."""
+    slices = {r["slice"] for r in result["primary"]}
+    assert slices == {"full", "hedge"}
+    got = {(r["regime"], r["arm"], r["seed"], r["greek"])
+           for r in result["primary"] if r["slice"] == "hedge"}
+    assert got == {(rg, arm, s, g) for rg in result["primary_regimes"]
+                   for arm in ENGINE_ARMS for s in SEEDS for g in GREEKS}

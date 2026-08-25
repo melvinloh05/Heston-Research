@@ -1,0 +1,851 @@
+benchmark:
+  meta:
+    name: heston_benchmark
+    version: v6
+    global_seed: 42
+    seeds_min: 5
+    seeds_confirmatory_cell: 10
+    notes: 'Primary = HELD-OUT ONLY. Strategy = DELTA-ONLY. Attribution via LADDER
+      (order) and label-noise DOSE-RESPONSE (correctness). Mechanism = cost-vs-robustness
+      adjudication, NOT a pre-decided outcome. Parametric hypercube (Option A). CRN
+      across ALL arms. Week-one oracle-headroom gate precedes all training.
+
+      '
+  oracle_headroom_gate:
+    purpose: measure the MAX detectable effect before committing compute
+    procedure: 'Hedge the confirmatory instrument twice: (a) with oracle Greeks; (b)
+      with oracle Greeks + noise scaled to plausible PINN gamma error (e.g. sigma_gamma
+      from a pilot fit). The PnL-distribution spread between (a) and (b) is the ceiling
+      on any effect the project can show on the primary metric.
+
+      '
+    decision_rule: 'If spread < pre-registered 10% CVaR95 threshold at chosen frequency
+      and TC tiers, RETUNE (rebalance frequency, misspecification severity) before
+      M4. Non-optional.
+
+      '
+    spread_threshold_rel: 0.1
+    sigma_rel_ladder:
+      decision:
+      - 0.05
+      - 0.1
+      - 0.15
+      diagnostic:
+      - 0.2
+      - 0.4
+      spacing_rationale: 'The clip''s bite roughly TRIPLES between sigma_rel 0.1 (0.061)
+        and 0.2 (0.215) and then saturates (0.780 at 0.4, 0.960 at 0.8), so resolution
+        is worth buying below 0.2 and worth nothing above it: 0.05 spacing across
+        [0.05, 0.20], one diagnostic rung above. 0.05 and 0.15 are NOT separately
+        measured; because every arm scales ONE common frozen field by amp, clipped_frac
+        is monotone non-decreasing in sigma_rel, so they are BOUNDED by their measured
+        neighbours (<=0.061 and <=0.215 respectively) rather than guessed. 0.40 is
+        retained as the labelled diagnostic that exhibits the saturation. 0.80 is
+        DROPPED: at 96% clipped the corrupted provider is a bang-bang hedger, not
+        a gamma-error perturbation, and its spread measures leverage, not Greek error.
+
+        '
+      production_scale_measurement: "AM3-2. The rationale above rests on a SMOKE-SIZE\
+        \ measurement (n_paths=256, 2 seeds). Fix batch 3 re-measured clipped_frac\
+        \ at PRODUCTION scale before any pilot existed (audit/fixlog/g2_production_scale.txt;\
+        \ n_paths=10000, the 10 confirmatory seeds, one gate run per seed so the seed\
+        \ spread is visible), mean [min, max] over seeds:\n  0.05 -> 0.0027 [0.0024,\
+        \ 0.0029]    0.10 -> 0.0737 [0.0712, 0.0756]\n  0.15 -> 0.1484 [0.1449, 0.1516]\
+        \    0.20 -> 0.2470 [0.2429, 0.2513]\n  0.40 -> 0.8137 [0.8102, 0.8194]\n\
+        Production scale raises clipped_frac at every rung by ~11-20% relative, so\
+        \ the smoke-size numbers the ladder was cut against were systematically LOW.\
+        \ TWO CONSEQUENCES, both recorded here rather than absorbed silently: (1)\
+        \ 0.05 and 0.15 \u2014 which AM2-3a could only BOUND by the monotonicity argument\
+        \ \u2014 are now MEASURED, at 0.0027 and 0.1484, comfortably inside region_of_validity.\
+        \ The monotonicity argument held, and those two rungs need no further defence.\
+        \ (2) 0.20 is DEMOTED to diagnostic. Its seed MEAN (0.2470) sits inside clipped_frac_max\
+        \ = 0.25 but its per-seed values STRADDLE the bound: 3 of 10 seeds are outside\
+        \ it, max 0.2513, seed std 0.0030. A rung whose decision-eligibility depends\
+        \ on which seeds were drawn is not a decision rung. The small seed std is\
+        \ what settles it: this is the rung sitting ON the bound, not noise around\
+        \ a comfortable value. clipped_frac_max was deliberately NOT raised to keep\
+        \ 0.20 \u2014 see the bound's own note. The DECISION band is therefore nominal\
+        \ [0.05, 0.15] at 0.05 spacing, which in DELIVERED terms (AM3-1 amplification)\
+        \ tops out at sigma_gamma_effective ~ 0.21 x rms(Gamma_oracle). If the pilot\
+        \ lands above that, see ladder_extension_contingency \u2014 declared below,\
+        \ before any pilot ran, so the response is not chosen after the fact.\n"
+    effective_sigma_reporting:
+      sigma_delta_effective: std over the reference cloud of the DELIVERED post-clip
+        delta error, clip(delta + eta) - delta
+      sigma_gamma_effective: std over the reference cloud of d/dS of that delivered
+        delta error -- the post-clip counterpart of the calibration statistic std(d_eta/dS)
+      report_alongside: sigma_rel
+      compare_pilot_against: sigma_gamma_effective
+      units_note: 'sigma_gamma_pilot (train.py --pilot, handed over via --sigma-gamma-from-runlog)
+        is a GAMMA rmse, so the pilot point is compared against sigma_gamma_effective;
+        the two effective quantities are in different units and only that one is commensurable
+        with the pilot. sigma_delta_effective is declared because it is the direct
+        measure of how much the clip CHANGED the intended corruption -- AM3-1: "removed"
+        is what this note said and it is wrong in the decision band, where the clip
+        ADDS (1.05x to 1.28x the unclipped delta-error scale at nominal 0.10 to 0.20).
+        EMISSION IS A CODE CHANGE (gate_headroom.py) and is NOT part of this amendment:
+        today the gate reports nominal sigma_rel plus clipped_frac only.
+
+        '
+      emission_status: 'AM3-1 status update, superseding the last sentence above:
+        fix batch 3 ITEM 3 IMPLEMENTED the emission. Both quantities are now on every
+        headroom.csv row, every summary row and the report table beside the nominal
+        sigma, and the pilot comparison reads compare_pilot_against from this block
+        rather than assuming a field name. The clause is no longer a declaration awaiting
+        code.
+
+        '
+    region_of_validity:
+      statistic: clipped_frac
+      clipped_frac_max: 0.25
+      interpretation: 'AM3-1 (replaces the previous wording, which said the delivered
+        corruption above the bound is "dominated by the clip rather than by the calibrated
+        field" and left the reader to infer that it is therefore WEAKER than its label
+        -- measured, it is STRONGER over the whole decision band). Above clipped_frac_max
+        the corrupted arm has stopped being a smooth perturbation of the oracle''s
+        Greeks and become a SATURATED hedger, pinned at a delta bound over much of
+        the state space, whose gamma error is the oracle''s own -Gamma rather than
+        the calibrated field''s. Its spread therefore cannot be mapped back to a sigma
+        at all: not because the mapping is biased in a known direction, but because
+        the object being measured is no longer the object the gate stands in for --
+        a trained PINN, whose Greek error is smooth in state. Rows above the bound
+        are DIAGNOSTIC ONLY and must be labelled as such wherever they appear.
+
+        '
+      if_pilot_outside: 'If sigma_gamma_pilot lands at an effective sigma whose clipped_frac
+        exceeds clipped_frac_max, the gate result is reported as INCONCLUSIVE -- neither
+        a pass nor a no-go -- and the ladder must be revisited (and this clause re-decided)
+        BEFORE any go decision. An inconclusive gate does not authorize training spend,
+        and must not be read as a failed gate.
+
+        '
+    ladder_extension_contingency:
+      trigger: 'The pilot''s sigma_gamma_effective exceeds the top DECISION rung''s
+        -- nominal 0.15, which delivers ~0.21 x rms(Gamma_oracle) after AM3-1 amplification.
+        In that state the pilot is outside the region of validity, gate_headroom reports
+        the DECISION section as INCONCLUSIVE (region_of_validity.if_pilot_outside),
+        and no training spend is authorized until this clause has been worked through.
+
+        '
+      extension_rungs:
+      - 0.2
+      - 0.25
+      added_as: diagnostic
+      preconditions_for_decision_eligibility: 'An extension rung becomes decision-eligible
+        ONLY after clipped_frac has been RE-MEASURED for it at PRODUCTION scale --
+        n_paths = hedging_simulation.paths. n_paths_per_cell, meta.seeds_confirmatory_cell
+        seeds, ONE gate run per seed, the protocol of audit/repro/e2_g2_production_scale.py
+        -- and BOTH its seed mean AND its per-seed MAXIMUM sit at or below clipped_frac_max.
+        The per-seed maximum is required because that is exactly the test 0.20 failed
+        (mean 0.2470 inside, max 0.2513 outside, 3 of 10 seeds over): eligibility
+        that depends on which seeds were drawn is not eligibility. The measurement
+        is written to audit/fixlog/ before the rung is promoted.
+
+        '
+      clipped_frac_max_stays: 0.25
+      expected_outcome: 'Stated honestly in advance, because it is the likely one:
+        clipped_frac is monotone non-decreasing in sigma_rel (every arm scales ONE
+        common frozen field by amp), and 0.20 ALREADY straddles the bound at production
+        scale, so with clipped_frac_max fixed at 0.25 an extension will probably NOT
+        yield an eligible rung. If it does not, the honest reading is that the gate
+        cannot bracket a pilot that large AT THIS DELTA CLIP, and the levers are the
+        contract''s own (decision_rule: rebalancing frequency, then misspecification
+        severity) -- NOT the bound, NOT the clip, and NOT a wider ladder. This clause
+        exists to make that outcome a pre-registered result rather than a negotiation
+        held after the number is known.
+
+        '
+      reporting: 'A gate result obtained on an extended ladder is reported AS an extended-ladder
+        result -- the ladder actually executed, which rungs were added, when each
+        was measured and promoted, and the fact that the original pre-registered ladder
+        did not bracket the pilot. It is NEVER presented as an original-ladder result,
+        and the headline gate reading keeps the original ladder''s answer (INCONCLUSIVE)
+        alongside it.
+
+        '
+      declared_before_pilot: true
+    motivation: Sakuma Table 5 (oracle ~= network hedge) is the power warning.
+    runs_before: all_training
+  models:
+    heston:
+      role: in_model
+      params_symbols:
+      - kappa
+      - theta
+      - xi
+      - rho
+      - v0
+    bates:
+      role: ood_hedging_only
+      base_params_inherit: heston.regimes.baseline
+      jump_severity_sweep:
+        lambda_j:
+        - 0.0
+        - 0.1
+        - 0.25
+        - 0.5
+        mu_j: -0.1
+        sigma_j:
+        - 0.05
+        - 0.1
+        - 0.15
+      consistency_check: lambda_j=0.0 must recover the Heston misspecified-hedging
+        result.
+      goldilocks_preregistration: 'Gap requires approximation error non-negligible
+        RELATIVE to model bias; expect NON-MONOTONE gap visibility across severity.
+        Sweep LOCATES the decision-relevant regime; ''nowhere'' = the pre-registered
+        null.
+
+        '
+    merton:
+      role: ood_hedging_only
+      params:
+        sigma: 0.2
+        lambda_j: 0.25
+        mu_j: -0.1
+        sigma_j: 0.1
+      note: isolates jump-misspec from SV-structure transfer.
+  training_parameterization:
+    choice: parametric_hypercube
+    network_inputs:
+    - S
+    - K
+    - tau
+    - kappa
+    - theta
+    - xi
+    - rho
+    - v0
+    sampling:
+      method: latin_hypercube
+      ranges:
+        kappa:
+        - 1.0
+        - 4.0
+        theta:
+        - 0.02
+        - 0.12
+        xi:
+        - 0.2
+        - 0.6
+        rho:
+        - -0.8
+        - -0.2
+        v0:
+        - 0.01
+        - 0.12
+      feller_constraint: REJECT samples with 2*kappa*theta/xi^2 < 0.40 (corners reach
+        ~0.11 << 0.44 boundary regime; oracle untrustworthy there)
+      exclusions:
+      - rho < -0.80 excluded entirely -> strong_neg_corr (rho=-0.9) is genuine EXTRAPOLATION
+      - excised balls (10% relative radius) around every named evaluation anchor
+      val_param_frac: 0.2
+      n_skt: 64
+    named_regimes_role: evaluation_anchors_not_training_set
+    ood_type1_tiers:
+      interpolation_with_hole: near_feller
+      extrapolation_beyond_support: strong_neg_corr
+    precedent: Sakuma's network takes model parameters as inputs and trains (text-verified).
+  grid:
+    S:
+      min: 50.0
+      max: 150.0
+      n: 41
+    K:
+      min: 60.0
+      max: 140.0
+      n: 33
+    tau:
+      min: 0.04
+      max: 1.0
+      n: 16
+    r: 0.02
+    q: 0.0
+    option_type: european_call
+  regimes:
+    baseline:
+      role: control_anchor
+      kappa: 2.0
+      theta: 0.04
+      xi: 0.3
+      rho: -0.5
+      v0: 0.04
+      v_trunc:
+      - 0.005
+      - 0.06
+      feller_ratio: 1.78
+    feller_violating_volvol:
+      role: stress_numerical_boundary
+      kappa: 2.0
+      theta: 0.04
+      xi: 0.6
+      rho: -0.5
+      v0: 0.04
+      v_trunc:
+      - 0.003
+      - 0.09
+      feller_ratio: 0.44
+      oracle: requires_fourth_leg
+      renamed_from: high_volvol
+      note: FELLER VIOLATED (0.44). EXCLUDED from training sampling by the >=0.40
+        constraint boundary; used as an EVAL anchor only, WITH oracle-uncertainty
+        error bars and the 4th leg.
+      carries: "Vega worst-case long-tau slice \u2014 reported WITH error bars under\
+        \ F7 discipline"
+    high_variance:
+      role: control_anchor
+      kappa: 2.0
+      theta: 0.09
+      xi: 0.3
+      rho: -0.5
+      v0: 0.09
+      v_trunc:
+      - 0.02
+      - 0.14
+      feller_ratio: 4.0
+    strong_neg_corr:
+      role: eval_extrapolation
+      kappa: 2.0
+      theta: 0.04
+      xi: 0.3
+      rho: -0.9
+      v0: 0.04
+      v_trunc:
+      - 0.005
+      - 0.06
+      feller_ratio: 1.78
+      note: rho beyond sampled range -> genuine extrapolation; expect larger seed
+        variance
+    near_feller:
+      role: eval_interpolation_hole
+      kappa: 1.5
+      theta: 0.04
+      xi: 0.34
+      rho: -0.7
+      v0: 0.02
+      v_trunc:
+      - 0.001
+      - 0.07
+      feller_ratio: 1.04
+      oracle: requires_fourth_leg
+  splits:
+    training: hypercube_sampled_feller_ge_0p4
+    eval_anchors_heston:
+    - baseline
+    - high_variance
+    - feller_violating_volvol
+    - strong_neg_corr
+    - near_feller
+    heldout_greek_and_hedging:
+    - near_feller
+    - strong_neg_corr
+    ood_models_hedging_only:
+    - bates
+    - merton
+    tau_maturity_holdout:
+      enabled: true
+      role: sanity_check
+    moneyness_wing_holdout:
+      enabled: true
+      role: sanity_check
+      gamma_metric: absolute_only
+      moneyness_bounds:
+      - 0.75
+      - 1.3
+  oracle:
+    formulation: heston_cf_trap_free
+    differentiate: before_not_after
+    quantities:
+    - price
+    - delta
+    - gamma
+    - vega
+    - vanna
+    three_way_validation:
+      leg1: autodiff_through_trap_free_cf
+      leg2: finite_difference_on_cf_price_grid
+      leg3: monte_carlo_pathwise_or_likelihood_ratio
+      agreement_tol_rel: 0.001
+      mc_coverage_frac: 1.0
+      mc_coverage_note: 'vanna has NO Monte Carlo estimator (oracle.py: heston_greeks_mc
+        returns NaN for vanna) -- mc_coverage_frac=1.0 does not create a vanna MC
+        leg. vanna''s cross-validation panel is CF+FD, plus ADI where the fourth leg
+        is required; this is existing oracle.py behavior (cross_validate excludes
+        absent legs), not a code change made by this amendment.
+
+        '
+    fourth_leg:
+      method: craig_sneyd_adi
+      required_for:
+      - near_feller
+      - feller_violating_volvol
+      - any sampled point with feller_ratio in [0.40, 0.60]
+      reason: CF-diff least trustworthy near/below Feller boundary (Little Heston
+        Trap, Albrecher 2007).
+    masking:
+      rule: mask_points_where_legs_disagree_above_tol
+      declared: pre_training
+      neutrality_checks:
+      - must NOT preferentially remove points where baseline PINN fails
+      - retained-point distribution matched across arms
+      - must NOT preferentially retain smooth-agrees-with-smooth points
+    uncertainty_reporting:
+      per_regime: true
+      per_greek: true
+      report_improvement_to_oracle_noise_ratio: true
+    reporting_discipline_F7:
+      lead_with:
+      - baseline
+      - high_variance
+      boundary_rule: near_feller AND feller_violating_volvol WITH error bars; effect
+        must exceed oracle noise
+      do_not: drop boundary regimes
+  methods:
+    ansatz_control:
+      terminal_condition_treatment: identical_across_all_arms
+    baseline0_feedforward:
+      use_pde: false
+      labels: none
+      note: price-only NN; FD-equivalent stencils; info-matched
+    baseline1_standard_pinn:
+      use_pde: true
+      greeks: structural
+      labels: none
+      note: Hainaut & Casas PDE-residual baseline
+    sobolev_pinn:
+      use_pde: true
+      labels:
+        delta: true
+        gamma: true
+        vega: true
+      note: MAIN (= ladder rung3)
+    sobolev_sans_pde:
+      use_pde: false
+      labels:
+        delta: true
+        gamma: true
+        vega: true
+      note: MISSING 4TH CELL (DML-no-PDE). Tests whether the residual earns its keep
+        OUT-of-distribution (Sakuma B~=C only shows in-dist inertia). Implement as
+        omega_PDE=0.
+    ladder_rung0_price:
+      use_pde: true
+      labels:
+        delta: false
+        gamma: false
+        vega: false
+    ladder_rung1_delta:
+      use_pde: true
+      labels:
+        delta: true
+        gamma: false
+        vega: false
+      note: 'differential-ML rung; Noguer: INSUFFICIENT for held-out Gamma'
+    ladder_rung2_delta_gamma:
+      use_pde: true
+      labels:
+        delta: true
+        gamma: true
+        vega: false
+      note: 'THE CAUSAL RUNG (rung1->rung2 gap = order claim); ALSO the Gamma-only
+        arm (consolidated #4) measuring Vega''s marginal contribution'
+    ladder_rung3_dgv:
+      use_pde: true
+      labels:
+        delta: true
+        gamma: true
+        vega: true
+      note: = sobolev_pinn
+    optional_vanna_arm:
+      use_pde: true
+      labels:
+        delta: true
+        gamma: true
+        vega: true
+        vanna: true
+      status: schedule_permitting
+      note: adds lambda_vanna*L_vanna; natural extension, not a dependency
+    ude:
+      family: ude
+      pde: partial
+      scope: ONE comparison, ONE number, ONE sentence
+    finn:
+      status: RELATED_WORK_ONLY
+      note: emergent Greeks; Delta-gamma hedging verified GBM-only internally.
+    deep_hedging:
+      status: RELATED_WORK_ONLY
+      note: learns a POLICY, discards pricer; one sentence.
+  loss:
+    expression: L = L_price + lambda_pde*L_pde + lambda_bc*L_bc + lambda_D*L_D + lambda_G*L_G
+      + lambda_v*L_v [+ lambda_vanna*L_vanna if optional arm]
+    toggles:
+      use_pde: lambda_pde
+      supervise_delta: lambda_D
+      supervise_gamma: lambda_G
+      supervise_vega: lambda_v
+    lambda_discipline:
+      tune_on: validation_only
+      assert_test_untouched: true
+      log_selected_values: true
+  lambda_selection:
+    lambda_delta:
+      value: 1.0
+      fixed: true
+      swept: false
+    lambda_pde:
+      source_arm: standard_pinn
+      rationale: 'Tuning a shared hyperparameter on the treatment arm (rung3) and
+        applying it to the baseline (standard_pinn) handicaps the baseline, for which
+        the PDE residual is the ONLY structural signal. Sourcing lambda_pde from standard_pinn''s
+        own validation score is the conservative direction wrt the study''s hypothesis.
+
+        '
+      candidates:
+      - 0.0
+      - 0.01
+      - 0.1
+      - 1.0
+    lambda_gamma:
+      source_arm: rung3_delta_gamma_vega
+      candidates:
+      - 0.3
+      - 1.0
+      - 3.0
+    lambda_vega:
+      source_arm: rung3_delta_gamma_vega
+      candidates:
+      - 0.3
+      - 1.0
+      - 3.0
+    tune_on: validation_only
+    robustness_row:
+      description: 'The confirmatory contrast (rung3 vs standard_pinn) is ADDITIONALLY
+        reported at the rung3-sourced lambda_pde, so the sourcing choice can be shown
+        to be immaterial to the headline result (or shown not to be).
+
+        '
+      status: robustness_result_not_a_second_confirmatory_test
+  label_noise_dose_response:
+    base_arm: ladder_rung3_dgv
+    corruption: gamma_labels_only
+    arms:
+      sigma_000:
+        gamma_labels: true_oracle
+      sigma_010:
+        gamma_labels: oracle*(1+N(0,0.10))
+      sigma_025:
+        gamma_labels: oracle*(1+N(0,0.25))
+      sigma_050:
+        gamma_labels: oracle*(1+N(0,0.50))
+      shuffled:
+        gamma_labels: shuffled_permuted
+        kind: structurally_wrong_endpoint
+      bs_gamma:
+        gamma_labels: black_scholes_at_matched_iv
+        kind: cheap_label_point
+        plotted_on_same_curve: true
+    gradient_penalty_only:
+      penalty: curvature_L2
+      labels: none
+      kind: pure_regularizer_reference
+    evidence: MONOTONE curve label-quality -> misspecified delta CVaR95 (isotonic
+      + rank corr)
+    readings:
+      monotone: correctness matters
+      flat: regularization null
+      true_ties_bs: cheap labels suffice
+  information_matching:
+    baseline_price_points: grow_until_greek_accuracy_plateaus
+    plateau_tol: 0.02
+    cap: 5N
+    stencils: fd_equivalent_resolution
+    report:
+    - saturation_curve
+    - fd_equivalent_resolution_version
+    - raw_scalar_count_version
+    capacity_control: retrain saturated baseline at 2x width; still flat => optimization-limited
+      objection dies
+    wording: plateau bounds what THIS architecture/protocol extracts from prices,
+      NOT an information bound
+  hedging_simulation:
+    strategy: delta_only_underlying
+    instrument:
+      type: european_call
+      S0: 100.0
+      K: 100.0
+      tau0: 0.25
+    horizon:
+      T_prime: 0.17
+      construction: 'hedge to T'' < T, liquidate at T'' (A&T construction): bounds
+        Gamma, avoids near-expiry ATM churn, stays in oracle-trusted tau'
+    rebalancing:
+      frequency: daily
+      frequency_per_year: 252
+      n_steps: 43
+      dt_realized: 0.003953488
+      fixed_across_arms: true
+    paths:
+      n_paths_per_cell: 10000
+      common_random_numbers: ALL_ARMS
+    pnl_convention:
+      self_financing: true
+      initial_premium: theta_train_ORACLE_price_for_ALL_arms
+      terminal_liability_mark: true_DGP_price_at_T_prime
+      loss_definition: L = -PnL; CVaR95 = mean worst 5% of L
+    transaction_costs:
+      kind: proportional_on_traded_notional
+      tiers:
+      - 0.0
+      - 0.01
+      - 0.02
+    misspecification:
+      train_params: baseline
+      perturbations:
+        xi_up:
+          xi: 0.45
+        rho_down:
+          rho: -0.8
+        combined:
+          xi: 0.45
+          rho: -0.8
+      cross_model:
+      - bates_severity_sweep
+      - merton
+    confirmatory_cell:
+      perturbation: combined
+      tc_tier: 0.01
+      regime: baseline
+      contrast: rung3_vs_standard_pinn
+      seeds: 10
+    competitors_extra:
+    - monte_carlo_greek_hedger
+    - oracle_delta_hedger
+    - smoothed_baseline_no_trade_band
+    smoothed_baseline_no_trade_band:
+      policy: no_trade_band_on_standard_pinn
+      citation: "[VERIFY] band-policy source \u2014 attributed to a Sakuma-HVA paper\
+        \ NOT in project; if unobtainable, cite classic transaction-cost hedging (e.g.\
+        \ Whalley-Wilmott / Davis-Panas-Zariphopoulou) instead"
+      target_to_beat: Sobolev should cut cost WITHOUT the band's tracking-error penalty
+    turnover:
+      metric: T_ex = sum|dDelta_hat| - sum|dDelta_oracle| on the SAME paths (EXCESS
+        over oracle)
+      framing: 'mechanism is gamma ERROR (excess turnover above oracle), NOT gamma
+        LEVEL (consolidated #8)'
+      falsifier: cost channel requires T_ex -> 0 for clean arm; unmoved T_ex kills
+        it whatever PnL shows
+    mechanism_preregistration:
+      two_by_two:
+        cells: '{theta_test=theta_train, !=} x {kappa=0, >0}'
+        in_model_k0: ~no gap = Sakuma cell (consistency check)
+      channel_readings:
+        gap_at_0pct_TC_present: robustness_channel_i
+        gap_zero_at_0pct_widening_with_TC_and_Tex_drops: cost_channel_ii
+        both: 'decompose: 0%-gap = robustness component; TC-slope = cost component'
+        neither_anywhere: 'pre-registered NULL: second-order supervision doesn''t
+          improve OOD delta hedging beyond first-order (coherent post-Sakuma)'
+      note: MECHANISM IS ADJUDICATED, NOT ASSUMED. Do not pre-commit to the cost outcome.
+  hedging_secondary_delta_gamma:
+    role: evaluation_only_one_sentence
+    expectation: consistent with A&T L_mean cost finding; option-leg turnover dominates;
+      ratio-hedge ill-conditioning remark lives HERE
+  metrics:
+    price:
+      name: price_rmse
+      role: sanity_check
+    greeks_in_domain:
+      role: sanity_check
+      quantities:
+      - delta
+      - gamma
+      - vega
+      - vanna
+    greeks_ood_params:
+      role: PRIMARY
+      scope: heldout_HESTON_parameter_regimes_ONLY
+      quantities:
+      - delta
+      - gamma
+      - vega
+      - vanna
+      vega_payoff_reported_here: true
+      note: 'report TAIL quantiles alongside RMSE (Sakuma: supervision helps Gamma
+        tails > global RMSE)'
+    greeks_cross_model: DROPPED_FROM_PRIMARY
+    hedging: see hedging_simulation
+    cvar_convention:
+      loss: -PnL
+      level: 0.95
+      threshold_form: relative >=10% AND paired-bootstrap 95% CI excludes 0
+  compute_accounting:
+    report_per_run:
+    - wall_clock
+    - param_count
+    - derivative_eval_cost
+    - peak_memory
+    report_both:
+    - matched_epochs
+    - matched_compute
+  ablations:
+    A1_vega_gamma_interaction: does supervising one degrade the other?
+    A2_pde_weight_sensitivity:
+      sweep_includes_zero: true
+      pre_registration: 'Sakuma C~=B at omega_R=0.01 => weak residual inert IN-dist;
+        question: does load-bearing PDE change OOD behavior?'
+  acceptance_thresholds:
+    confirmatory_cell_pass: misspec delta CVaR95 improvement >=10% relative AND paired-bootstrap
+      95% CI excludes 0 (combined,1% TC,baseline,rung3 vs standard_pinn)
+    confirmatory_cell_rel_min: 0.1
+    headline_scale_free: fraction_of_baseline_to_oracle_gap_closed
+    order_attribution: rung2 beats rung1 at the cell, CI excludes 0; failure = honest
+      null
+    dose_response:
+      criteria: Spearman rho > 0 (shape confirmed via isotonic fit) AND one-sided
+        seed-bootstrap tail probability P(rho<=0) < bootstrap_tail_prob_max
+      bootstrap_tail_prob_max: 0.05
+      tail_prob_definition: a one-sided BOOTSTRAP TAIL PROBABILITY over seeds that
+        rho<=0 -- NOT a classical p-value
+      interpretation: 'Low-powered at 5-7 dose levels: a ''flat'' verdict establishes
+        ONLY "monotonicity not demonstrated", NOT that the dose-response IS flat.
+        These are different claims; the memo must not conflate them.
+
+        '
+      conservatism: this criterion is conservative wrt the study's hypothesis -- it
+        can only move a verdict toward the pre-registered null
+    ood_gamma_rmse_reduction_min: 0.15
+    ood_vega_rmse_reduction_min: 0.15
+    price_parity_within: 0.1
+    mechanism_falsifier: 0%-TC gap => robustness (i); zero-at-0% widening + T_ex->0
+      => cost (ii); T_ex unmoved rejects (ii). Both publishable. STATE BEFORE RESULTS.
+    in_model_hedging: NOT_PASS_FAIL
+    sakuma_null_rel_tol: 0.02
+    seeds:
+      default: 5
+      confirmatory_cell: 10
+    tail_claim_requires: paired_bootstrap_over_CRN_paths_with_seed_variance_separated
+    verdict_vocabulary:
+      universal:
+        'null': NOT EVALUATED. The artifact is legitimately absent, or a declared
+          precondition is unmet (e.g. fewer than seeds.confirmatory_cell seeds present).
+          NO claim is made in either direction -- this is not a result
+        error: 'evaluation was ATTEMPTED and FAILED: the artifact is PRESENT but unusable
+          (renamed column, array-shape mismatch, failed import). A defect in the analysis
+          or in the artifact, NEVER a study outcome'
+      outcome_values:
+        confirmatory_cell:
+        - pass
+        - fail
+        order_attribution:
+        - pass
+        - fail
+        ood_greek_thresholds:
+        - pass
+        - fail
+        dose_response:
+        - monotone
+        - flat
+        sakuma_null_consistency:
+        - consistent
+        - flag
+        mechanism_adjudication:
+        - channel_i
+        - channel_ii
+        - decomposition
+        - no_channel
+        goldilocks_bates:
+        - decision_relevant_regime_located
+        - no_decisive_regime
+      must_not_collapse: '`null` and `error` must NEVER be merged in any table, memo
+        or figure. "Not evaluated" and "evaluation broke" are different states, and
+        only the first is a legitimate reporting outcome: an `error` row means the
+        study has a defect to fix, not a result to report. mechanism_memo renders
+        every verdict identically as **{verdict}**, so the distinction lives in the
+        VALUE and must survive every downstream transcription.
+
+        '
+      yaml_note: '`null` and `error` are QUOTED because bare null is a YAML null literal;
+        they are the strings ''null'' and ''error'''
+  exhibits:
+    E1_ladder_and_factorial_table: misspec delta CVaR95 across rungs + 4-cell factorial
+      (incl sobolev_sans_pde); OOD-param Greek RMSE side panel (Vega payoff here)
+    E2_mechanism_figure: TC sweep x arms; 2x2 inset; T_ex (excess-over-oracle turnover)
+    E3_dose_response_curve: "label quality -> CVaR95, BS-Gamma labeled \u2014 money\
+      \ figure"
+    E4_decomposition_panel: fraction-of-oracle-gap-closed; cost vs directional split;
+      vanna inset; smoothed-band comparison
+    one_sentence_citizens:
+    - ude
+    - delta_gamma_secondary
+    - finn_related_work
+    - deep_hedging_related_work
+    cut:
+    - finn_reproduction
+    - wing_tau_headline_tables
+    - cross_model_greek_rmse
+    - in_model_cvar_threshold
+engine:
+  contract:
+    S0: 100.0
+    K: 100.0
+    T: 0.25
+    option_type: european_call
+  horizon:
+    T_prime: 0.17
+  simulation:
+    n_paths: 10000
+    scheme: qe_andersen
+    psi_c: 1.5
+    paths_dir: null
+  rebalancing:
+    frequency_per_year: 252
+    charge_final_unwind: true
+  hedge_option:
+    strike_rule: atm_at_inception
+    maturity_factor: 2.0
+    min_tau: 0.02
+    gamma_floor: 1.0e-06
+  misspecification:
+    magnitudes:
+    - 0.0
+    - 0.5
+    - 1.0
+    directions:
+      xi_up:
+        param: xi
+        shift_at_m1: 0.15
+      rho_down:
+        param: rho
+        shift_at_m1: -0.3
+      combined:
+        legs:
+        - xi_up
+        - rho_down
+  smoothing_baseline:
+    applies_to:
+    - standard_pinn
+    ema_alpha: null
+    no_trade_band: 0.04
+  risk:
+    cvar_level: 0.95
+    loss_definition: -PnL
+    bootstrap_B: 2000
+    gap_floor_frac: 0.01
+    persist_pnl: true
+  pnl_convention:
+    initial_premium: theta_train_oracle_for_all_arms
+    terminal_mark: true_dgp_price_at_T_prime
+  oracle_provider_name: oracle
+  baseline_provider_name: standard_pinn
+  overlay:
+    n_paths: 64
+    path_idx: 0
+  output_dir: results/hedging
+derived:
+  seeds:
+  - 42
+  - 43
+  - 44
+  - 45
+  - 46
+  contract_path: heston_benchmark_v6.yaml
+  engine_path: hedging_config.yaml

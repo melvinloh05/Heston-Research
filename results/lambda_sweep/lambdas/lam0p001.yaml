@@ -1,0 +1,83 @@
+lambda_pde: 0.001
+lambda_gamma: 1.0
+lambda_vega: 1.0
+lambda_delta: 1.0
+sources:
+  lambda_pde: standard_pinn
+  lambda_gamma: rung3_delta_gamma_vega
+  lambda_vega: rung3_delta_gamma_vega
+  lambda_delta: fixed_not_swept
+selection:
+  protocol: 'staged: 1-D lambda_pde on the source arm, then 2-D (lambda_gamma, lambda_vega)
+    at that fixed lambda_pde'
+  tune_on: validation_only
+  candidates:
+    lambda_pde:
+    - 0.0
+    - 0.01
+    - 0.1
+    - 1.0
+    lambda_gamma:
+    - 0.3
+    - 1.0
+    - 3.0
+    lambda_vega:
+    - 0.3
+    - 1.0
+    - 3.0
+  seed: 42
+  steps: 20000
+scores_table_pde:
+- lambda_pde: 0.0
+  score: 0.1756511658691977
+- lambda_pde: 0.01
+  score: 0.16956909745008486
+- lambda_pde: 0.1
+  score: 0.33321906674796264
+- lambda_pde: 1.0
+  score: 0.3723517979262346
+scores_table:
+- lambda_pde: 0.01
+  lambda_gamma: 0.3
+  lambda_vega: 0.3
+  score: 0.007158829080211608
+- lambda_pde: 0.01
+  lambda_gamma: 0.3
+  lambda_vega: 1.0
+  score: 0.006294423886846713
+- lambda_pde: 0.01
+  lambda_gamma: 0.3
+  lambda_vega: 3.0
+  score: 0.007800208311450077
+- lambda_pde: 0.01
+  lambda_gamma: 1.0
+  lambda_vega: 0.3
+  score: 0.00579822349803699
+- lambda_pde: 0.01
+  lambda_gamma: 1.0
+  lambda_vega: 1.0
+  score: 0.005655259477610546
+- lambda_pde: 0.01
+  lambda_gamma: 1.0
+  lambda_vega: 3.0
+  score: 0.006340286730965233
+- lambda_pde: 0.01
+  lambda_gamma: 3.0
+  lambda_vega: 0.3
+  score: 0.006591972489568176
+- lambda_pde: 0.01
+  lambda_gamma: 3.0
+  lambda_vega: 1.0
+  score: 0.005964740041133369
+- lambda_pde: 0.01
+  lambda_gamma: 3.0
+  lambda_vega: 3.0
+  score: 0.005769983088825658
+config_hash: 5156aa71d24d545326b6afce05314c6805509af94238213e660db126212fc006
+_provenance:
+  origin: lambdas_selected.yaml
+  modified_field: lambda_pde
+  registered_value: 0.01
+  sweep_value: 0.001
+  purpose: "CODE_AUDIT_2026-08-20 action 2 \u2014 lambda_pde sensitivity analysis"
+  not_a_reselection: true

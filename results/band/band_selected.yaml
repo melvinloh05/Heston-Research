@@ -1,0 +1,9 @@
+no_trade_band: 0.04
+criterion: min_cvar0.95_at_tc0.01_on_magnitude0.5_validation_cells
+magnitudes_consumed:
+- 0.5
+table:
+  0.005: 4.618028546923829
+  0.01: 4.591437135643572
+  0.02: 4.508631910805318
+  0.04: 4.3536175540451865

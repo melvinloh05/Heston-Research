@@ -1,0 +1,66 @@
+{
+  "arm": "info_matched_baseline",
+  "seed": 44,
+  "checkpoint": "best.pt",
+  "checkpoint_is_best_validation": true,
+  "width_mult": 1.0,
+  "selected_multiplier": 3,
+  "n_price_points": 12288,
+  "N": 4096,
+  "cap_multiplier": 5,
+  "plateau_reached": true,
+  "plateau_pinned_at_cap": false,
+  "data_capped_multipliers": [],
+  "plateau_capped": false,
+  "plateau_tol": 0.02,
+  "plateau_criterion": "smallest m>=2 whose mean-over-seeds validation Gamma rel-RMSE improvement over m-1 is < 2.00%; else pinned at the 5N cap (plateau_reached=false)",
+  "accounting": "fd_equivalent",
+  "n_train_rows": 12288,
+  "fd_equivalent_budget": 61440,
+  "raw_scalar_budget": 49152,
+  "config_hash": "3c68c4cb395562d5870af20a0ace9b06c22a81e33a33396c5ad2bda3eba0d3c3",
+  "data_manifest_sha256": "a9aef630656d8c2068efdb8355d617d417e2c9d117a23b4c7af35aef1ad467be",
+  "saturation_curve": [
+    {
+      "multiplier": 1,
+      "n_price_points": 4096,
+      "gamma_rel_rmse_mean": 0.6469933266420203,
+      "gamma_rel_rmse_std": 0.09515029908255088,
+      "rel_improvement_vs_prev": null,
+      "n_seeds": 5
+    },
+    {
+      "multiplier": 2,
+      "n_price_points": 8192,
+      "gamma_rel_rmse_mean": 0.6031452463220928,
+      "gamma_rel_rmse_std": 0.012816242592107598,
+      "rel_improvement_vs_prev": 0.06777207509620654,
+      "n_seeds": 5
+    },
+    {
+      "multiplier": 3,
+      "n_price_points": 12288,
+      "gamma_rel_rmse_mean": 0.6050491462238601,
+      "gamma_rel_rmse_std": 0.01684325464705819,
+      "rel_improvement_vs_prev": -0.003156619261076941,
+      "n_seeds": 5
+    },
+    {
+      "multiplier": 4,
+      "n_price_points": 16384,
+      "gamma_rel_rmse_mean": 0.6036026391608059,
+      "gamma_rel_rmse_std": 0.010723029152115664,
+      "rel_improvement_vs_prev": 0.0023907265584653357,
+      "n_seeds": 5
+    },
+    {
+      "multiplier": 5,
+      "n_price_points": 20480,
+      "gamma_rel_rmse_mean": 0.5958102264791635,
+      "gamma_rel_rmse_std": 0.014685422105050491,
+      "rel_improvement_vs_prev": 0.012909838652256882,
+      "n_seeds": 5
+    }
+  ],
+  "note": "plateau reached; budget is the smallest saturating multiplier"
+}

@@ -174,13 +174,28 @@ def test_spotcheck_detects_broken_provider(provider, qe_states):
 # determinism
 # ---------------------------------------------------------------------------
 
-def test_provider_deterministic(provider):
+def test_provider_reproducible_to_roundoff(provider):
+    """Repeated identical calls agree to ~1 ULP, NOT bitwise.
+
+    There is no randomness in the CF quadrature — it is a pure function of its
+    inputs — but its vectorised reductions do not reproduce bit-for-bit call to
+    call on this platform (measured 2026-08-20: max |delta - delta| ~ 1.8e-15 on
+    real path states, and the wobble survives pinning the BLAS thread count to 1;
+    docs/CODE_AUDIT_2026-08-20.md). This test asserted `array_equal` and therefore
+    flaked. The invariant that MATTERS — no hidden state advancing between calls,
+    no RNG — is unchanged and is what the tolerance below still enforces: state
+    carried between calls would move the output by orders more than 1e-12.
+    """
     S = np.linspace(80.0, 125.0, 9)
     v = np.linspace(0.0, 0.12, 9)
     a = provider.evaluate(S, v, 0.17, K)
     b = provider.evaluate(S, v, 0.17, K)
+    assert a.keys() == b.keys()
     for nm in a:
-        assert np.array_equal(a[nm], b[nm]), nm
+        # atol only: price/vega are O(1-10) but delta/gamma reach ~1e-9 deep OTM,
+        # where a relative tolerance would trip on a numerically-zero value
+        np.testing.assert_allclose(a[nm], b[nm], rtol=0.0, atol=1e-11,
+                                   err_msg=nm)
 
 
 def test_state_sampling_deterministic():
@@ -192,9 +207,23 @@ def test_state_sampling_deterministic():
         assert np.array_equal(x, y)
 
 
-def test_spotcheck_deterministic(provider, qe_states):
+def test_spotcheck_reproducible_to_roundoff(provider, qe_states):
+    """The spot check reports the same verdict and the same offenders twice over.
+
+    `worst` carries raw per-state relative errors, which inherit the CF leg's ~1 ULP
+    call-to-call wobble (see test_provider_reproducible_to_roundoff), so the dicts are
+    compared field-wise to a tolerance rather than with `==`. The parts that must be
+    EXACT — the pass fraction, the counts, and WHICH states are the worst offenders —
+    are still asserted exactly.
+    """
     S, v, tau = (a[:150] for a in qe_states)
     r1 = pathwise_oracle_spotcheck(provider, (S, v, tau), R, Q, K=K)
     r2 = pathwise_oracle_spotcheck(provider, (S, v, tau), R, Q, K=K)
-    assert r1.frac_ok == r2.frac_ok
-    assert r1.worst == r2.worst
+    assert (r1.frac_ok, r1.n, r1.n_low_v) == (r2.frac_ok, r2.n, r2.n_low_v)
+    assert [w["index"] for w in r1.worst] == [w["index"] for w in r2.worst]
+    assert [w["greek"] for w in r1.worst] == [w["greek"] for w in r2.worst]
+    for w1, w2 in zip(r1.worst, r2.worst):
+        assert w1.keys() == w2.keys()
+        assert (w1["S"], w1["v"], w1["tau"]) == (w2["S"], w2["v"], w2["tau"])
+        assert w1["in_low_v_band"] == w2["in_low_v_band"]
+        assert w1["rel_err"] == pytest.approx(w2["rel_err"], rel=1e-9, abs=1e-12)

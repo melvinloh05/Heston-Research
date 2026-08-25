@@ -113,6 +113,28 @@ class PINNConfig:
             assert self.label_source == "oracle"
 
 
+def effective_lambda_pde(cfg) -> float:
+    """The weight the PDE residual ACTUALLY carried — 0.0 whenever the term is off.
+
+    READ THIS BEFORE QUOTING A CHECKPOINT'S `lambda_pde` (CODE_AUDIT_2026-08-20
+    action 5). `SobolevPINN.loss` gates the residual on
+    `cfg.use_pde and cfg.lambda_pde != 0.0`, so on a `use_pde=False` arm the stored
+    `lambda_pde` is INERT — it is whatever pinn_config's default happened to be and
+    was never applied. The frozen `sobolev_sans_pde` and `feedforward` checkpoints
+    carry `lambda_pde=1.0` with `use_pde=False` for exactly that reason: 1.0 is the
+    PINNConfig default and `train._apply_lambdas` deliberately does not override it
+    on a residual-free arm. Reading those bytes literally says "the PDE-free arms had
+    the HEAVIEST residual in the study", which is the opposite of the truth.
+
+    Frozen checkpoints are NOT rewritten to fix this — they are registered artifacts.
+    Every reporting path should call this instead of the raw field.
+
+    Accepts a PINNConfig or a checkpoint's `cfg` dict (asdict form).
+    """
+    get = (lambda k: cfg.get(k)) if isinstance(cfg, dict) else (lambda k: getattr(cfg, k))
+    return 0.0 if not bool(get("use_pde")) else float(get("lambda_pde"))
+
+
 def load_arm(cfg_path: str, arm: str) -> PINNConfig:
     """Build one arm's PINNConfig from pinn_config.yaml: shared block + per-arm flag overrides."""
     with open(cfg_path) as f:
@@ -162,11 +184,20 @@ class MLP(nn.Module):
 
 def autodiff_greeks(fn: Callable[[torch.Tensor], torch.Tensor], x: torch.Tensor,
                     i_s: int, i_v: int,
-                    need: tuple[str, ...] = ("delta", "gamma", "vega")) -> dict[str, torch.Tensor]:
+                    need: tuple[str, ...] = ("delta", "gamma", "vega"),
+                    create_graph2: bool = True) -> dict[str, torch.Tensor]:
     """Greeks of scalar-output fn(x) by autodiff; x must have requires_grad.
 
     delta = dV/dS, gamma = d2V/dS2, vega = dV/dv, vanna = d2V/dSdv. Second-order
     quantities use double backward (create_graph on the first pass).
+
+    create_graph2 keeps the SECOND pass differentiable. TRAINING needs it: the
+    gamma/vanna loss terms must backprop into the parameters, and that path exists
+    only if g2 carries a graph. EVALUATION passes False to release that graph as it
+    is consumed (third derivatives are never needed there). The FIRST pass always
+    keeps create_graph=True — without it there is no graph to take gamma from at
+    all. The flag governs graph RETENTION only: values are bit-identical either way,
+    and the _GRAD_CALLS accounting is untouched.
     """
     out = {"price": fn(x)}
     order2 = ("gamma" in need) or ("vanna" in need)
@@ -179,7 +210,7 @@ def autodiff_greeks(fn: Callable[[torch.Tensor], torch.Tensor], x: torch.Tensor,
     if "vega" in need:
         out["vega"] = g[:, i_v]
     if order2:
-        g2 = torch.autograd.grad(g[:, i_s].sum(), x, create_graph=True)[0]
+        g2 = torch.autograd.grad(g[:, i_s].sum(), x, create_graph=create_graph2)[0]
         _GRAD_CALLS["n"] += 1
         if "gamma" in need:
             out["gamma"] = g2[:, i_s]
@@ -251,11 +282,24 @@ class SobolevPINN(nn.Module):
         Chunks the batch (cfg.second_order_microbatch) to bound double-backward peak
         memory — dominant near the Feller boundary (feller_violating_volvol 0.44,
         near_feller 1.04) where dense low-v sampling meets steep d2V/dv2.
+
+        Each chunk is detached BEFORE the next is built. The previous
+        list-comprehension form deferred every .detach() to the final dict
+        comprehension, so all chunks' double-backward graphs stayed alive at once and
+        peak memory scaled with the FULL batch — the chunking bounded nothing it
+        claimed to bound. The second-order pass also drops create_graph here, freeing
+        the second backward's graph as it is consumed. Both edits touch graph
+        retention only; the returned values are bit-identical to the old path.
         """
         n = chunk or self.cfg.second_order_microbatch or x.shape[0]
-        outs = [autodiff_greeks(self.net, xc.detach().clone().requires_grad_(True),
-                                self.i_s, self.i_v, need) for xc in x.split(n)]
-        return {k: torch.cat([o[k].detach() for o in outs]) for k in outs[0]}
+        acc: dict[str, list[torch.Tensor]] = {}
+        for xc in x.split(n):
+            out = autodiff_greeks(self.net, xc.detach().clone().requires_grad_(True),
+                                  self.i_s, self.i_v, need, create_graph2=False)
+            for k, t in out.items():
+                acc.setdefault(k, []).append(t.detach())
+            del out, xc            # drop the chunk graph before the next one is built
+        return {k: torch.cat(v) for k, v in acc.items()}
 
     def _coef(self, x: torch.Tensor, name: str) -> torch.Tensor:
         """Per-point PDE coefficient: input column (option_A) or cfg.pde_params (option_B)."""

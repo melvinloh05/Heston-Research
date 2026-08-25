@@ -295,6 +295,135 @@ def test_pde_residual_finite_and_in_raw_units_after_normalization():
     assert float(res.abs().mean()) < 1e4   # fresh-init residual is O(1e0-1e3) in raw units
 
 
+class _AnalyticHead(torch.nn.Module):
+    """Swap-in replacement for model.net, so a closed-form V is assembled by the
+    PRODUCTION residual code (pde_residual) with nothing stubbed but the price head."""
+
+    def __init__(self, f) -> None:
+        super().__init__()
+        self.f = f
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.f(x)
+
+
+def test_pde_manufactured_solution():
+    """Method of manufactured solutions on the REAL residual assembly.
+
+    Two independent halves, because they fail for different reasons:
+
+    (1) EXACT SOLUTIONS. The forward V = S (q = 0), the discount bond V = e^{-r*tau},
+        and their combination V = S - K*e^{-r*tau} all solve the homogeneous Heston
+        operator identically, so the residual must be 0 to roundoff. This half is
+        fully non-circular: the target comes from the operator's analytic kernel, NOT
+        from any transcription of the code under test. It pins the tau, dV/dS and -rV
+        terms and their relative signs.
+
+    (2) EVERY-COEFFICIENT PROBE. The exact solutions above are linear in S and
+        constant in v, so they leave V_ss, V_sv and V_vv multiplied by zero -- a
+        residual that dropped all three diffusion terms would still pass (1). So feed
+        V = a*S^2 + b*S*v + c*v^2 + d*tau and compare against the operator written out
+        by hand. a, b, c, d are independent, so a dropped, swapped, or sign-flipped
+        term cannot cancel. This half IS a transcription check: it catches wrong
+        coefficients, not a wrong operator.
+
+    Replaces shape-and-finiteness assertions, which pass for any residual whatsoever.
+    """
+    cfg = small_cfg(dtype="float64")
+    assert cfg.q == 0.0, "V = S solves the operator only when q = 0"
+    set_seed(11)
+    model = SobolevPINN(cfg)
+    x = make_batch(cfg, n=64, seed=7)["x"].to(torch.float64)
+    i_s, i_t = model.i_s, model.i["tau"]
+    r, q = cfg.r, cfg.q
+
+    def zero(z: torch.Tensor) -> torch.Tensor:
+        """Exactly 0.0 in value and in every derivative, but QUADRATIC in x, so the
+        graph survives. Needed because a V that is linear in S makes dV/dS a
+        graph-free constant, and pde_residual's second autograd.grad then reports x
+        as unused. 0.0 * finite is exactly 0.0, so the residual is unperturbed."""
+        return 0.0 * (z * z).sum(dim=1)
+
+    def residual_of(f) -> torch.Tensor:
+        model.net = _AnalyticHead(lambda z: f(z) + zero(z))
+        return model.pde_residual(x.clone().requires_grad_(True))
+
+    for name, f in (
+            ("forward V = S", lambda z: z[:, i_s]),
+            ("bond V = exp(-r*tau)", lambda z: torch.exp(-r * z[:, i_t])),
+            ("V = S - K*exp(-r*tau)",
+             lambda z: z[:, i_s] - z[:, model.i["K"]] * torch.exp(-r * z[:, i_t]))):
+        res = residual_of(f)
+        assert torch.allclose(res, torch.zeros_like(res), atol=1e-9), \
+            f"{name} is an exact solution; residual should vanish, got {res.abs().max():.3e}"
+
+    a, b, c, d = 0.3, -0.7, 1.1, 0.5
+    res = residual_of(lambda z: (a * z[:, i_s] ** 2 + b * z[:, i_s] * z[:, model.i_v]
+                                 + c * z[:, model.i_v] ** 2 + d * z[:, i_t]))
+
+    S, v, tau = x[:, i_s], x[:, model.i_v], x[:, i_t]
+    kappa, theta, xi, rho = (x[:, model.i[k]] for k in ("kappa", "theta", "xi", "rho"))
+    V = a * S ** 2 + b * S * v + c * v ** 2 + d * tau
+    V_tau, V_s, V_v = d, 2 * a * S + b * v, b * S + 2 * c * v
+    V_ss, V_sv, V_vv = 2 * a, b, 2 * c
+    expected = (-V_tau + 0.5 * v * S ** 2 * V_ss + rho * xi * v * S * V_sv
+                + 0.5 * xi ** 2 * v * V_vv + (r - q) * S * V_s
+                + kappa * (theta - v) * V_v - r * V)
+    assert torch.allclose(res, expected, rtol=1e-9, atol=1e-7), \
+        f"max abs deviation {(res - expected).abs().max():.3e}"
+
+
+def test_analytic_parameter_gradient():
+    """Second-order loss terms must backprop into the WEIGHTS, checked against FD.
+
+    The existing autodiff tests differentiate w.r.t. INPUTS. Nothing checked the path
+    that Sobolev training actually rides: d/d(theta_net) of a scalar built from gamma,
+    which exists only because the second autograd pass is taken with create_graph=True.
+    Drop that flag and gamma's parameter gradient silently becomes zero or vanishes --
+    training would still run and still report a loss. This test is the regression guard
+    for it, and for greeks_eval's eval-time create_graph2=False staying scoped to
+    evaluation.
+
+    Central differences on individual weight entries, float64, h = 1e-6.
+    """
+    cfg = small_cfg(dtype="float64")
+    set_seed(19)
+    model = SobolevPINN(cfg)
+    x = make_batch(cfg, n=16, seed=3)["x"].to(torch.float64)
+
+    def scalar() -> torch.Tensor:   # mixes a 1st- and a 2nd-order quantity
+        g = model.greeks(x.clone().requires_grad_(True), need=("delta", "gamma"))
+        return g["gamma"].pow(2).sum() + g["delta"].sum()
+
+    params = [p for p in model.parameters() if p.requires_grad]
+    # allow_unused: the output-layer BIAS shifts the price but cancels out of both
+    # delta and gamma, so it is genuinely absent from the graph. Materialize it as an
+    # explicit zero rather than skipping it -- finite differences then have to agree
+    # that it is zero, which is a check, not an exemption.
+    grads = [torch.zeros_like(p) if g is None else g
+             for p, g in zip(params, torch.autograd.grad(scalar(), params,
+                                                         allow_unused=True))]
+
+    h, checked, saw_second_order = 1e-6, 0, False
+    for p, gp in zip(params, grads):
+        flat, gflat = p.data.view(-1), gp.reshape(-1)
+        for j in {0, flat.numel() // 2, flat.numel() - 1}:
+            orig = float(flat[j])
+            flat[j] = orig + h
+            up = float(scalar())
+            flat[j] = orig - h
+            dn = float(scalar())
+            flat[j] = orig                      # restore before the next probe
+            fd, ana = (up - dn) / (2.0 * h), float(gflat[j])
+            assert abs(ana - fd) <= 1e-5 * max(1.0, abs(fd)), \
+                f"autograd {ana:.12g} vs finite difference {fd:.12g}"
+            checked += 1
+            saw_second_order |= abs(ana) > 1e-8
+
+    assert checked >= 12, f"only {checked} parameter entries probed"
+    assert saw_second_order, "no nonzero parameter gradient -- the check was vacuous"
+
+
 def test_greeks_eval_chunking_matches_full_batch():
     cfg = small_cfg()
     set_seed(0)
@@ -575,3 +704,41 @@ def test_gamma_loss_scale_uses_gamma_ref_invariant_across_dose_arms():
     b_legacy = {k: v for k, v in b_noisy.items() if k != "gamma_ref"}
     s_legacy = scale_of(small_cfg(), b_legacy)
     assert abs(s_legacy - float(noisy.pow(2).mean() + 1e-12)) < 1e-12
+
+# ---------------------------------------------------------------------------
+# effective_lambda_pde: the checkpoint-cfg misreading guard (CODE_AUDIT action 5)
+# ---------------------------------------------------------------------------
+
+def test_effective_lambda_pde_is_zero_when_the_residual_is_off():
+    """A residual-free arm reports 0.0 however large its stored lambda_pde is."""
+    from SobolevPINN import PINNConfig, effective_lambda_pde
+    off = PINNConfig(use_pde=False, lambda_pde=1.0)      # the frozen sans_pde/feedforward shape
+    assert effective_lambda_pde(off) == 0.0
+    assert effective_lambda_pde({"use_pde": False, "lambda_pde": 1.0}) == 0.0
+    on = PINNConfig(use_pde=True, lambda_pde=0.01)
+    assert effective_lambda_pde(on) == pytest.approx(0.01)
+    assert effective_lambda_pde({"use_pde": True, "lambda_pde": 0.01}) == pytest.approx(0.01)
+    # an explicitly zeroed residual is also zero, both spellings
+    assert effective_lambda_pde(PINNConfig(use_pde=True, lambda_pde=0.0)) == 0.0
+
+
+def test_effective_lambda_pde_matches_what_the_loss_actually_gates_on():
+    """The helper agrees with `loss`: a 'pde' term appears iff the effective weight > 0."""
+    import torch
+
+    from SobolevPINN import PINNConfig, SobolevPINN, effective_lambda_pde
+    # fork_rng + an explicit seed: building a model and drawing a batch both consume the
+    # GLOBAL torch RNG, and leaking that shift into later modules perturbs every test
+    # that reproduces a fit bitwise (test_run_hedging's bank-vs-on-the-fly check is the
+    # one that catches it). Deterministic here, and no global state escapes.
+    with torch.random.fork_rng():
+        torch.manual_seed(0)
+        for use_pde, lam in ((False, 1.0), (True, 0.0), (True, 0.01)):
+            cfg = PINNConfig(use_pde=use_pde, lambda_pde=lam, use_bc=False,
+                             loss_scale_mode="raw")
+            m = SobolevPINN(cfg)
+            n = 16
+            x = torch.rand(n, len(cfg.inputs), dtype=torch.float32) + 1.0
+            batch = {"x": x, "price": torch.rand(n), "gamma_ref": torch.rand(n)}
+            terms = m.loss(batch)
+            assert ("pde" in terms) == (effective_lambda_pde(cfg) > 0.0), (use_pde, lam)

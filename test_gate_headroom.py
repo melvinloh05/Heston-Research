@@ -64,14 +64,27 @@ def test_field_determinism():
     p1 = gh.NoisyOracleProvider(_BASE, 0.4 * _RMS, 5, _RANGES, _CLOUD, "field")
     p1b = gh.NoisyOracleProvider(_BASE, 0.4 * _RMS, 5, _RANGES, _CLOUD, "field")
     p2 = gh.NoisyOracleProvider(_BASE, 0.4 * _RMS, 6, _RANGES, _CLOUD, "field")
+    # THE FIELD is exactly reproducible and that is what this test is about: eta is
+    # pure numpy arithmetic on frozen RFF draws, so it is asserted BITWISE.
+    a1 = p1.eta(S, v, tau)
+    assert np.array_equal(a1, p1b.eta(S, v, tau))            # same seed -> same field
+    assert np.array_equal(a1, p1.eta(S, v, tau))             # pure: no advance
+    assert not np.array_equal(a1, p2.eta(S, v, tau))         # different seed -> differs
+    # The DELIVERED delta additionally carries the CF oracle underneath, which is
+    # reproducible only to ~1 ULP on this platform (docs/CODE_AUDIT_2026-08-20.md),
+    # so it is asserted to round-off. atol, not rtol: delta lives in [0, 1] and its
+    # deep-OTM entries are ~1e-9.
     e1 = p1.evaluate(S, v, tau, 100.0)["delta"]
-    assert np.array_equal(e1, p1b.evaluate(S, v, tau, 100.0)["delta"])
-    assert np.array_equal(e1, p1.evaluate(S, v, tau, 100.0)["delta"])  # pure
-    assert not np.array_equal(e1, p2.evaluate(S, v, tau, 100.0)["delta"])
-    # price and gamma pass through the wrapper unchanged
+    np.testing.assert_allclose(e1, p1b.evaluate(S, v, tau, 100.0)["delta"],
+                               rtol=0.0, atol=1e-12)
+    np.testing.assert_allclose(e1, p1.evaluate(S, v, tau, 100.0)["delta"],
+                               rtol=0.0, atol=1e-12)
+    assert not np.allclose(e1, p2.evaluate(S, v, tau, 100.0)["delta"],
+                           rtol=0.0, atol=1e-12)
+    # price and gamma pass through the wrapper unchanged (same round-off caveat)
     got, ref = p1.evaluate(S, v, tau, 100.0), _BASE.evaluate(S, v, tau, 100.0)
-    assert np.array_equal(got["price"], ref["price"])
-    assert np.array_equal(got["gamma"], ref["gamma"])
+    np.testing.assert_allclose(got["price"], ref["price"], rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(got["gamma"], ref["gamma"], rtol=1e-12, atol=1e-12)
 
 
 def test_calibration_matches_target():
@@ -144,15 +157,29 @@ def test_sigma_zero_reproduces_oracle():
     p0 = gh.NoisyOracleProvider(_BASE, 0.0, 5, _RANGES, _CLOUD, "field")
     assert p0.amp == 0.0
     got, ref = p0.evaluate(S, v, tau, 100.0), _BASE.evaluate(S, v, tau, 100.0)
-    assert np.array_equal(got["delta"], ref["delta"])
+    # ABSOLUTE tolerance: delta lives in [0, 1], and the deep-OTM entries are ~5e-9,
+    # so a relative check there would trip on a 1-ULP wobble of a number that is
+    # numerically zero. The corruption at amp=0 is identically zero (eta is exactly
+    # -0.0); what is not exactly reproducible is the CF evaluation underneath it.
+    np.testing.assert_allclose(got["delta"], ref["delta"], rtol=0.0, atol=1e-12)
     # iid at sigma=0 also degenerates to the oracle (matched amplitude is 0)
     pi0 = gh.NoisyOracleProvider(_BASE, 0.0, 5, _RANGES, _CLOUD, "iid")
     assert pi0.sigma_delta == 0.0
     cfg = gh._trim_to_combined_cell(_cfg(n_paths=64, freq=252, n_boot=10))
     rows = hb.run_headline(cfg, {"oracle": _BASE, "noisy_z": p0})
     noisy = [r_ for r_ in rows if r_["method"] == "noisy_z"]
-    assert noisy and all(r_["pnl_vs_oracle_cvar_diff"] == 0.0 for r_ in noisy)
-    assert all(r_["t_ex"] == 0.0 for r_ in noisy)
+    # ROUND-OFF, NOT BITWISE. The corruption really is identically zero (the
+    # array_equal check above is exact), but the CVaR difference and T_ex are
+    # accumulated through the pricing/settlement stack, and repeated evaluation of
+    # the CF oracle on identical inputs is reproducible only to ~1 ULP on this
+    # platform (measured: max |delta - delta| = 1.8e-15 on real path states; see
+    # docs/CODE_AUDIT_2026-08-20.md). Asserting == 0.0 therefore fails
+    # nondeterministically. _FP_TOL is ~6 orders below the smallest difference any
+    # genuine regression here would produce (a spurious corruption moves CVaR by
+    # O(0.1)), so the invariant keeps all of its power.
+    _FP_TOL = 1e-9
+    assert noisy and all(abs(r_["pnl_vs_oracle_cvar_diff"]) <= _FP_TOL for r_ in noisy)
+    assert all(abs(r_["t_ex"]) <= _FP_TOL for r_ in noisy)
 
 
 def test_binding_delta_clip_is_reported():
