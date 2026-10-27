@@ -617,14 +617,14 @@ is not trajectory-weighted and does not establish a general predictor of hedging
 performance.
 
 % =============================================================================
-\section{What transfers, and what does not}
+\section{Conclusion}
 \label{sec:limits}
 
-Derivative supervision improves accuracy at held-out Heston coefficients, including
-a derivative that was not directly supervised. Better approximation of the assumed
-model, however, does not guarantee better decisions when that model is wrong. Under
-the tested departures and costs, we find no consistent hedging advantage that can
-be attributed specifically to derivative labels.
+Derivative supervision improves accuracy at held-out Heston coefficients.
+Adding curvature labels also improves the unsupervised variance derivative.
+These gains do not establish a consistent hedging advantage specific to derivative
+labels under the tested departures and costs. The confirmatory test fails,
+reinforcing the need to evaluate decisions alongside fidelity to the assumed model.
 
 The study covers one two-state PDE, a small network, simulated paths and selected
 departures, with no real-market validation. Derivative-accuracy comparisons use five seeds;
