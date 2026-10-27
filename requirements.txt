@@ -1,0 +1,6 @@
+# Direct dependency versions observed in the existing CPU environment.
+numpy==1.26.4
+scipy==1.11.4
+torch==2.5.1
+PyYAML==6.0.2
+matplotlib==3.9.2

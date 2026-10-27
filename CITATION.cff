@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite the accompanying paper."
+type: software
+title: "Heston Research: derivative supervision and hedging"
+authors:
+  - family-names: Loh
+    given-names: Melvin
+  - family-names: Joshi
+    given-names: Prathamesh Dinesh
+repository-code: "https://github.com/melvinloh05/Heston-Research"
+preferred-citation:
+  type: conference-paper
+  title: "When the Simulator Is Wrong, Do Better Derivatives Improve Decisions?"
+  authors:
+    - family-names: Loh
+      given-names: Melvin
+    - family-names: Joshi
+      given-names: Prathamesh Dinesh
+  year: 2026
+  conference:
+    name: "Sim2Science: ML with Imperfect Scientific Models, NeurIPS 2026"
+  url: "https://github.com/melvinloh05/Heston-Research/blob/main/paper/paper.pdf"

@@ -42,3 +42,39 @@ mlruns/
 # superseded / scratch (kept locally, not published)
 claim_memo_v7 copy.md
 layout.md
+
+# Credentials and local assistant/editor state
+.env.*
+!.env.example
+*.pem
+*.key
+.aws/
+.ssh/
+.claude/
+.codex/
+.agents/
+
+# Local release work and manuscript backups
+release_work/
+backup_pre_fig/
+*.bak
+*.before
+*.pre-*
+*.diff
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# LaTeX build files
+*.aux
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.out
+*.synctex.gz
+*.toc
+*.xdv
+
+# Intentional public paper artifact
+!paper/paper.pdf

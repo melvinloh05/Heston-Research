@@ -1,0 +1,5 @@
+# Keep historical prose and numerical metadata out of source-language statistics.
+archive/** linguist-documentation
+audit/** linguist-documentation
+results/** linguist-generated
+paper/neurips_2026.sty linguist-vendored
