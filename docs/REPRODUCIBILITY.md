@@ -13,7 +13,7 @@ python eval_greeks.py --help
 python run_hedging.py --help
 ```
 
-The existing CPU environment passed **284 tests** on 27 October 2026. These tests do not reproduce the full study. `python oracle.py` runs numerical self-tests; `python oracle.py --full` adds more expensive checks. Passing these checks is not a convergence certificate for every evaluation point.
+The existing CPU environment passed **284 tests** on 30 October 2026. The documented command-line entry points and `python oracle.py` numerical self-tests also passed. These checks do not reproduce the full study. `python oracle.py --full` adds more expensive checks. Passing these checks is not a convergence certificate for every evaluation point.
 
 ## Experimental stages
 
@@ -40,6 +40,8 @@ python train.py \
 ```
 
 Replace the label path with an actual generated artifact. One run does not reproduce the five/ten-seed comparisons. Cloud execution is optional and not required for local use.
+
+The optional `robustness_grid.sh` and `lambda_pde_curve.sh` helpers require Zsh and expect the original label artifact at `data/frozen/v6-labels-20260812/train_val/train_val_labels.npz`. They run relative to their own checkout and stop before launching experiments if that artifact is absent. They are full experiment launchers, not installation checks.
 
 ## Interpreting the code
 

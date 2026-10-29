@@ -6,8 +6,14 @@
 # at the confirmatory seed count, then hedges each. Exploratory sensitivity, NOT a
 # second confirmatory test.
 set -e
-cd "/Users/melvin/Documents/Heston Research"
+script_dir=${0:A:h}
+cd -- "$script_dir"
 D=data/frozen/v6-labels-20260812
+if [[ ! -f "$D/train_val/train_val_labels.npz" ]]; then
+  print -u2 "Missing label artifact: $D/train_val/train_val_labels.npz"
+  print -u2 "See docs/REPRODUCIBILITY.md for data preparation before running this experiment."
+  exit 1
+fi
 export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4
 date
 for L in 1e-4 1e-3 3e-3; do

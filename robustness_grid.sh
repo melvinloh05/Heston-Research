@@ -5,8 +5,14 @@
 # Only the two arms the row names (rung3 vs standard_pinn), only the confirmatory
 # seed set. Separate ckpt root so the registered grid is never overwritten.
 set -e
-cd "/Users/melvin/Documents/Heston Research"
+script_dir=${0:A:h}
+cd -- "$script_dir"
 D=data/frozen/v6-labels-20260812
+if [[ ! -f "$D/train_val/train_val_labels.npz" ]]; then
+  print -u2 "Missing label artifact: $D/train_val/train_val_labels.npz"
+  print -u2 "See docs/REPRODUCIBILITY.md for data preparation before running this experiment."
+  exit 1
+fi
 OUT=results/grid_robustness
 LOG=$OUT/_logs
 export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4

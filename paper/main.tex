@@ -1,222 +1,3 @@
-% =============================================================================
-% =============================================================================
-% Which Derivatives Should You Label When the Simulator Is Wrong?
-% NeurIPS 2026 workshop submission (ANONYMOUS). Target: Sim2Science, Paris.
-% Deadline 2 Sep 2026 AoE. Reviews due 23 Sep.
-%
-% =============================================================================
-% WHAT THIS DRAFT IS  (v5 -- label-budget reframe)
-% =============================================================================
-% Same experiments, same numbers, same frozen pre-registration. The headroom
-% framing is GONE from the headline. Headroom was the gap to an oracle: real,
-% but elementary and not novel, and three previous drafts were built on it.
-%
-% THE CONTRIBUTION IS NOW THE LABEL BUDGET. Three findings, none of which is
-% in the prior work, all of which are already in your tables:
-%   (A) Derivative supervision transfers off-distribution: 82-93% RMSE
-%       reduction on two IN-CLASS coefficient regimes excised from training.
-%       NOT a model-class departure -- Bates/Merton are hedging-PnL-only by
-%       contract (splits.ood_models_hedging_only), there is no field metric
-%       there, and at zero cost the value-only arm captures >=96% of the
-%       downstream gap. Do not restore the old "model-class" wording.
-%   (B) The CURVATURE rung carries the gain, and it TRANSFERS. Rung 2 adds only
-%       d2u/dS2 labels and improves du/dv from 2.66/1.73 to 1.59/1.28 -- a
-%       derivative it never supervises. This was in Table 1 and unremarked in
-%       every previous draft.
-%   (C) MORE LABELS IS NOT MONOTONICALLY BETTER. Rung 3 beats rung 2 on du/dv
-%       but LOSES on d2u/dS2 (0.82 vs 0.64) and du/dS (0.0038 vs 0.0034) at the
-%       extrapolated regime; registered dose-response monotonicity is not
-%       demonstrated (rho_S = 0.029); and rung 2 vs rung 1 downstream is a
-%       registered REVERSAL, harmful in sign though below the negligibility
-%       floor. A ladder is the wrong mental model; it is a budget with a
-%       trade-off.
-% Section 3 is (A),(B),(C) then the controls then the downstream coda. DO NOT
-% REORDER. The downstream null is a 200-word coda, which is its correct size.
-%
-% =============================================================================
-% ONE INCONSISTENCY IN YOUR OWN SOURCES -- RECONCILE BEFORE SUBMITTING
-% =============================================================================
-% paper_s2s.tex says supervision cuts second-derivative and second-state RMSE
-% "by 78 to 96%"; the headroom draft says "82 to 93%". The reduction rows of
-% the RMSE table give 89/86 and 90/89 for d2u/dS2 and 93/93 and 87/82 for
-% du/dv, i.e. a range of 82 to 93. This draft uses 82 to 93 because that is
-% what the table supports. If 78-96 is right, the table is wrong; fix one.
-%
-% =============================================================================
-% CONCESSIONS THAT MUST STAY (each closes an attack that is fatal alone)
-% =============================================================================
-%   - Two of the four reference solvers (Carr-Madan FFT, Fang-Oosterlee COS)
-%     share a characteristic-function core and fail together where the branch
-%     cut bites, which is the extrapolated-correlation anchor. Now cited to
-%     albrecher2007little, which names that failure exactly.
-%   - The 1e-3 agreement certifies the SOLUTION. Section 2 points to
-%     app:oracle for the per-derivative spread. THAT APPENDIX MUST REPORT IT.
-%   - Masking removes disagreeing points, which concentrate in the regions the
-%     appendix names.
-%   - The residual arm uses a fixed weight in the style of the cited PINN, not
-%     a tuned one; adaptive loss balancing was not run.
-%   - Two of three controls land ABOVE baseline (0.982, 0.699).
-%   - Labels here are NOISELESS; coarse-grained force matching's are not.
-%   - The registered accuracy endpoint failed on a two-sided value-parity
-%     guard, not on accuracy. Stated plainly.
-%
-% NO FINANCE VOCABULARY IN THE BODY. J is defined once as the mean of the worst
-% 5% of outcomes. Do not reintroduce CVaR, hedging, rebalancing, Greeks or
-% options. The one exception is the disclosure sentence in Section 2.
-%
-% =============================================================================
-% PAGE BUDGET -- COMPILE AND CHECK
-% =============================================================================
-% ~2500 words, 1 table, 0 figures. The f0_problem figure was REMOVED to pay for
-% the reviewer-response edits; its numbers now appear as a clause in Section 1.
-% COMPILE AND CONFIRM. If you come in comfortably under 4.7 pp, put the figure
-% back at 0.55\linewidth after the first paragraph of Section 1 and cut that
-% clause. If you run OVER, cut in this order:
-%   (a) Section 3.6's second paragraph (the grid/occupancy caution). (~5 lines)
-%   (b) The loss-decomposition sentence in 3.5.                      (~4 lines)
-%   (c) Table 1's two "reduction vs." rows; state them in prose.     (~3 lines)
-% Do NOT cut: the transfer result in 3.3, the non-monotonicity paragraph in
-% 3.4, the "How wrong is the world" paragraph in 3.1, the evidence-base
-% paragraph before 3.2, the noiseless-labels limitation, or the parity-guard
-% disclosure. Those are the reviewer-response edits and each one closes an
-% objection that is fatal on its own.
-%
-% =============================================================================
-% v4 CHANGELOG -- claim-narrowing pass (body net +22 lines vs v3)
-% =============================================================================
-% The ladder is NESTED. That single fact drove most of this pass: curvature
-% enters at the same moment as rung 2, so "curvature is special" and "rung 2 is
-% special" are confounded and cannot be separated without S+v or SS-alone.
-%   - TITLE changed (revert note sits above \title).
-%   - ABSTRACT splits survival (out-of-class anchors) from budget (in-class
-%     held-out regimes), and states we correct no simulator.
-%   - NEW intro para "What this is not": scope vs. the Sim2Science CFP. We
-%     reduce surrogate approximation error, we do not mitigate sim-to-real
-%     discrepancy. This is the venue-fit fix.
-%   - NEW para in 3.3 "What the nesting cannot separate", naming S+v and SS.
-%   - 3.2 retitled; "attributable to" -> "largest increment in this ordering".
-%   - "reallocates capacity" -> "trades accuracy" (mechanism not demonstrated).
-%   - Universal recommendations removed from 3.3, 3.4 and 5.
-%   - "severity sweep" -> "sweep over the departure parameters" in 3.1; the
-%     registered name is now flagged as overstated where it appears.
-%   - 3.6 coda leads with the failure standing, not with the accounting.
-%   - FIXED dangling \ref{sec:readout} -> sec:controls. VERIFY THIS IS RIGHT.
-%   - Paid for with the author's own cut list: Table 1's two reduction rows
-%     (folded into 3.1 prose, incl. the 91-97% first-derivative figures) and
-%     the loss-decomposition sentence in 3.5. Cut (a), the 3.6 grid/occupancy
-%     caution, was NOT taken -- it is the only off-policy warning and cutting
-%     it orphans ross2011reduction.
-%
-% =============================================================================
-% v5 APPENDIX PASS -- what changed, and the three things you must read
-% =============================================================================
-% All 11 \FILL slots are filled from the frozen artifacts. ./check_submission.sh
-% passes: no live \FILL, 24 refs resolved, 31 citations resolved, environments
-% balanced, checklist wired. It does NOT compile -- there is no LaTeX toolchain
-% on this machine, so the PAGE COUNT IS STILL UNVERIFIED. Compile against the
-% real neurips_2026.sty (it IS the real one, 443 lines, the "stub" note in v4
-% was stale) before uploading.
-%
-% ---------------------------------------------------------------------------
-% 1. THE HIGH-RISK CHECK CLEARED, BUT NOT FOR THE EXPECTED REASON
-% ---------------------------------------------------------------------------
-% The worry was that 3.4's non-monotonicity (0.641->0.823, 0.003399->0.003784 at
-% the EXTRAPOLATED anchor) sits inside the reference spread because the
-% Carr-Madan/COS branch cut bites at rho=-0.9. Measured: those gaps are 0.09 and
-% 0.97 envelopes, so yes, inside -- but the branch cut has nothing to do with it.
-% Recomputing the deterministic legs on the frozen grids, CF and FD agree to
-% 1.6e-8 (first derivative) and 3.3e-8 (curvature) RMS there. The envelope is
-% MONTE-CARLO NOISE: the stochastic leg sets it on 96% of retained points. The
-% 2.65x envelope inversion DECOMPOSES (from the frozen mc_se, no resampling):
-% 2.00 path budget (the 4x multiplier near_feller draws, exact 1/sqrt(n)) x 1.32
-% regime (curvature is genuinely noisier per path at rho=-0.9), and 2.00*1.32
-% reproduces 2.65 to 1%. So it is MOSTLY but NOT ONLY the budget -- an earlier
-% draft of this note overclaimed. At matched budget delta and vega ratios are
-% 0.84 and 0.70, i.e. the extrapolated anchor is BETTER resolved on those. 3.4 was ALREADY written correctly (it says
-% "cannot resolve", not "degrades"); app:oracle now proves it and says why.
-% Sharper: at that anchor rungs 1/2/3 have curvature RMSE 0.77/0.31/0.40 times
-% the envelope -- ALL of them beat the reference's own certainty, so NO ordering
-% among them is resolvable there. Only the baseline gap is.
-%
-% ---------------------------------------------------------------------------
-% 2. ONE CONTROL IS NOT CONFIGURATION-MATCHED -- 3.5 WAS REWRITTEN
-% ---------------------------------------------------------------------------
-% The information-matched (extra-value-data) arm trained at lambda_pde = 1.0,
-% 100x the shared 1e-2 and the WORST of the four registered candidates on the
-% study's own selection score (0.372 vs 0.170). Verified on all five
-% checkpoints; results/grid/README.md documents it; run_info_matching.py never
-% reads lambdas_selected.yaml. Every other arm is at 0.01, or legitimately 0.
-% CONSEQUENCE: "extra value data lands ABOVE baseline (0.699 vs 0.410)" is NOT
-% supported -- at one budget unit and the selected weight that arm simply IS the
-% baseline, so an unknown share of the gap is the weight. What survives is ONLY
-% the sweep read against ITSELF, and only AT THAT WEIGHT: 5x data moves validation
-% 0.647->0.596, plateau at 0.605, 2x width 0.709, none of it near supervision's
-% 0.045. The general claim "value data cannot substitute for derivative labels"
-% is NOT established either -- the matched-weight (0.01) budget sweep was never
-% run. That rerun is the cheapest missing experiment in the paper. 3.5 and
-% app:exhibits now say exactly this. The old "two of three controls land above
-% baseline" line is now ONE (0.982).
-%
-% ---------------------------------------------------------------------------
-% 3. A BETTER FRAMING IS AVAILABLE AND IS PARTLY TAKEN
-% ---------------------------------------------------------------------------
-% 3.1 used to say we "did not make" a severity-versus-advantage curve. We did
-% make an ORDINAL one and it is clean: at zero cost the advantage over the
-% baseline falls monotonically in EACH departure coordinate (all six chains),
-% +27.7% in class -> +20.5/+17.9/+15.6 -> +10.6/+7.0/+4.9 -> +0.8 -> -3.0/-4.2,
-% every pooled CI excluding zero except the sign-crossing cell. That is a
-% measured decay to a sign change, not "no favourable regime". The registered
-% no_decisive_regime verdict reads the 1% tier ONLY, where everything is harm.
-% 3.1 now states the ordering; app:config Table 6 is the table. It stays INSIDE
-% "How wrong is the world", keeps the "the name overstates it" concession, and
-% ends by saying this is an ordering and not the curve a distance would buy.
-% Title, abstract and section order are UNTOUCHED.
-% DO NOT promote it to the headline for this submission. The reason is not
-% modesty: the ordering is ordinal and descriptive, the registered readout is
-% the 1% tier, and there the sweep is uniformly harmful. "Downstream value is
-% conditional" is the defensible headline and it is the one in the title. The
-% severity decay is a finding to build the NEXT paper on -- with a calibrated
-% departure axis, and a cost tier that is not the one that inverts every arm.
-%
-% ---------------------------------------------------------------------------
-% OTHER CORRECTIONS MADE TO THE BODY (all were checkable errors)
-% ---------------------------------------------------------------------------
-%  - 3.1 "Against the residual-only baseline ... 82 to 93% ... 91 to 95%": the
-%    82% comes from the VALUE-ONLY baseline, not the residual-only one. Now
-%    "against the two unsupervised baselines ... 82 to 93% and 91 to 97%".
-%  - 3.4 "per-seed range [+0.0311,+0.0856]": that is the ACROSS-SEED 95% t
-%    interval on the mean. The per-seed values span [-0.0072,+0.1181] and one
-%    of ten seeds favours rung 2. Now stated correctly.
-%  - Section 2 masking: the mask does NOT concentrate at the extrapolated
-%    anchor. That anchor is the LESS masked of the two (9.2% vs 17.1%). It
-%    concentrates at tau=0.04 (94%/79%) and JUST out of the money (47.5% in
-%    S/K in [0.75,0.9)), not deep OTM.
-%  - 3.6 rank exchange "in all five seeds": true 5/5 for the FIRST derivative
-%    at both regimes; curvature is 3/5 and 4/5 on the grid side. Narrowed.
-%  - Amendment dates in app:thresholds verified against git (2026-07-31,
-%    08-04, 08-05, 08-05); all precede the 08-12 label freeze and the 08-18
-%    results, so "Pre-eval: yes" holds.
-%
-% ---------------------------------------------------------------------------
-% STILL OPEN
-% ---------------------------------------------------------------------------
-%  - COMPILE and check the page count. Appendices added ~4 pages of tables;
-%    if the workshop counts appendices toward the limit, cut app:config's
-%    Table 4 (per-arm compute) and app:exhibits' Table 9 (region) first.
-%  - Nominate the reciprocal reviewer: a co-author with a publication record,
-%    not the student first author. Two reviews by 23 Sep.
-%
-% =============================================================================
-% PAGE BUDGET -- COMPILE AND CHECK
-% =============================================================================
-% Body ~2500 words, 1 table, 0 figures. If the BODY runs over 4.7 pp, cut in
-% this order: (a) 3.6's second paragraph (grid/occupancy caution); (b) the
-% loss-decomposition sentence in 3.5; (c) Table 1's reduction rows.
-% Do NOT cut: the transfer result in 3.3, the non-monotonicity paragraph in
-% 3.4, "How wrong is the world" in 3.1, the evidence-base paragraph before 3.2,
-% the noiseless-labels limitation, the parity-guard disclosure, or the
-% lambda_pde disclosure now in 3.5. Each closes an objection fatal on its own.
-%
 \documentclass{article}
  
 \usepackage[dblblindworkshop,final]{neurips_2026}
@@ -238,25 +19,11 @@
 \lstset{extendedchars=true, inputencoding=utf8,
         literate={---}{{---}}1 {--}{{--}}1}
 
-% -----------------------------------------------------------------------------
-% \FILL renders in red and is deliberately ugly. Every appendix slot below that
-% needs your real numbers uses it. Nothing marked \FILL may survive to the
-% submitted PDF. Run ./check_submission.sh before uploading; it greps for these
-% and fails the build if any remain.
-% -----------------------------------------------------------------------------
-\newcommand{\FILL}[1]{\textcolor{red}{\textbf{[FILL: #1]}}}
  
-% TITLE CHANGED. The old title, "Which Derivatives Should You Label When the
-% Simulator Is Wrong?", asserts two things the experiments do not establish:
-% (i) that a general answer exists (the ladder is NESTED -- S+v and SS+v were
-% never trained), and (ii) that the budget result was obtained under
-% model-class departure (it was not; it comes from in-class held-out regimes).
-% To revert, delete the two lines below and restore the one-line original.
 \title{When the Simulator Is Wrong, Do Better Derivatives Improve Decisions?}
 
 \workshoptitle{Sim2Science: ML with Imperfect Scientific Models}
 
-% Camera-ready author block.
 \author{%
   Melvin Loh \\
   Nanyang Technological University \\
@@ -295,7 +62,6 @@ the tested nested design, without establishing a consistent hedging advantage
 specific to derivative labels or a general ordering of label choices.
 \end{abstract}
 
-% =============================================================================
 \section{Introduction}
 \label{sec:intro}
 
@@ -359,7 +125,6 @@ improves a fixed hedging rule when the model is structurally wrong. The experime
 test this distinction in one PDE setting; they do not establish transfer to other
 simulators or real-market performance.
 
-% =============================================================================
 \section{Setup}
 \label{sec:setup}
 
@@ -448,7 +213,6 @@ Tests include zero and nonzero transaction costs. The pre-registered thresholds
 require a $10\%$ confirmatory improvement, a $15\%$ derivative-accuracy improvement,
 and specify a $2\%$ negligibility floor (Table~\ref{tab:verdicts}).
 
-% =============================================================================
 \section{Results}
 \label{sec:results}
 
@@ -616,7 +380,6 @@ all five seeds at both anchors (Table~\ref{tab:region}). This exploratory metric
 is not trajectory-weighted and does not establish a general predictor of hedging
 performance.
 
-% =============================================================================
 \section{Conclusion}
 \label{sec:limits}
 
@@ -658,21 +421,18 @@ Andersen, L. (2008).
 \newblock Simple and efficient simulation of the Heston stochastic volatility model.
 \newblock \emph{Journal of Computational Finance}, 11(3):1--42.
  
-% VERIFIED 2026-09-01
 \bibitem[Bates(1996)]{bates1996jumps}
 Bates, D.~S. (1996).
 \newblock Jumps and stochastic volatility: exchange rate processes implicit in
 Deutsche Mark options.
 \newblock \emph{The Review of Financial Studies}, 9(1):69--107.
  
-% VERIFIED 2026-09-01 -- ADDED FOR SIM2SCIENCE
 \bibitem[Behler and Parrinello(2007)]{behler2007generalized}
 Behler, J. and Parrinello, M. (2007).
 \newblock Generalized neural-network representation of high-dimensional
 potential-energy surfaces.
 \newblock \emph{Physical Review Letters}, 98(14):146401.
  
-% VERIFIED 2026-09-01 -- ADDED FOR SIM2SCIENCE
 \bibitem[Cannon et~al.(2022)]{cannon2022investigating}
 Cannon, P., Ward, D., and Schmon, S.~M. (2022).
 \newblock Investigating the impact of model misspecification in neural
@@ -680,7 +440,6 @@ simulation-based inference.
 \newblock arXiv:2209.01845.
 
  
-% VERIFIED 2026-09-01 -- ADDED FOR SIM2SCIENCE
 \bibitem[Craig and Sneyd(1988)]{craig1988alternating}
 Craig, I.~J.~D. and Sneyd, A.~D. (1988).
 \newblock An alternating-direction implicit scheme for parabolic equations with
@@ -733,7 +492,6 @@ Huge, B. and Savine, A. (2020).
 \newblock Differential machine learning.
 \newblock arXiv:2005.02347.
  
-% VERIFIED 2026-09-01
 \bibitem[Hull and White(2017)]{hull2017optimal}
 Hull, J. and White, A. (2017).
 \newblock Optimal delta hedging for options.
@@ -759,7 +517,6 @@ Malandain, K.~A., Kalici, S., and Chakhoyan, H. (2025).
 deep operator networks.
 \newblock arXiv:2512.07162.
  
-% VERIFIED 2026-09-01
 \bibitem[Merton(1976)]{merton1976option}
 Merton, R.~C. (1976).
 \newblock Option pricing when underlying stock returns are discontinuous.
@@ -783,7 +540,6 @@ Rockafellar, R.~T. and Uryasev, S. (2000).
 \newblock Optimization of conditional value-at-risk.
 \newblock \emph{Journal of Risk}, 2(3):21--41.
  
-% VERIFIED 2026-09-01
 \bibitem[Ross et~al.(2011)]{ross2011reduction}
 Ross, S., Gordon, G., and Bagnell, D. (2011).
 \newblock A reduction of imitation learning and structured prediction to no-regret
@@ -802,7 +558,6 @@ Son, H., Jang, J.~W., Han, W.~J., and Hwang, H.~J. (2023).
 \newblock Sobolev training for physics-informed neural networks.
 \newblock \emph{Communications in Mathematical Sciences}, 21(6):1679--1705.
  
-% VERIFIED 2026-09-01 -- ADDED FOR SIM2SCIENCE
 \bibitem[Wang et~al.(2019)]{wang2019machine}
 Wang, J., Olsson, S., Wehmeyer, C., P\'erez, A., Charron, N.~E., de~Fabritiis, G.,
 No\'e, F., and Clementi, C. (2019).
@@ -828,11 +583,9 @@ language refinement, and code drafting and debugging. The authors directed the
 project, reviewed and verified the manuscript, the code, and all reported results,
 and take full responsibility for the final manuscript.
 
-% Sim2Science requires the NeurIPS checklist after references and before appendices.
 \input{checklist_s2s_CR}
 
 \appendix
-% =============================================================================
 \section{Pre-registered acceptance block and amendment record}
 \label{app:thresholds}
 The decision-bearing portions below are transcribed from
@@ -932,7 +685,6 @@ Departure sweep: locate a favourable regime & --- & none at the $1\%$ tier & no 
 \end{tabular}
 \end{table}
 
-% =============================================================================
 \section{Reference construction and per-derivative solver spread}
 \label{app:oracle}
 Section~\ref{sec:setup} reports agreement across available numerical legs.
@@ -1085,7 +837,6 @@ leg at the interpolated anchor introduces additional pairwise checks. These mask
 are selective; shared support makes arm comparisons consistent on retained points
 but does not establish performance over excluded states.
 
-% =============================================================================
 \section{Training configuration and excision protocol}
 \label{app:config}
 The main ladder and baseline arms share architecture, optimiser, data and step
@@ -1239,7 +990,6 @@ state removed & & $2.925$ & $+9.8\%$ & $5.845$ & $-3.7\%$ \\
 \end{tabular}
 \end{table}
 
-% =============================================================================
 \section{Supporting exhibits}
 \label{app:exhibits}
 
