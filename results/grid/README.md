@@ -1,6 +1,8 @@
-# `results/grid/` — trained checkpoint artifacts
+# Training-run metadata and checkpoint conventions
 
-One directory per arm, one subdirectory per seed: `<arm>/s<seed>/{best.pt, last.pt,
+This public checkout contains `runlog.json` metadata. The checkpoint weights and loss-curve CSVs described below are original experiment artifacts and are not bundled here.
+
+The original layout has one directory per arm, one subdirectory per seed: `<arm>/s<seed>/{best.pt, last.pt,
 runlog.json, loss_curves.csv}`. `best.pt` is the best-validation model; `last.pt` is the
 matched-epochs endpoint (the contract asks for both). Every fit ran `train.py
 --matched-epochs` at 20,000 steps on CPU; `runlog.json` carries the wall clock, parameter

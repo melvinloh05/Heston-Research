@@ -78,3 +78,10 @@ backup_pre_fig/
 
 # Intentional public paper artifact
 !paper/paper.pdf
+
+# Small saved result tables published with the paper
+!results/eval_greeks_full/ood_param_greeks.csv
+!results/eval_greeks_hedgeslice/ood_param_greeks.csv
+!results/hedging/confirmatory/headline_delta_only_per_seed.csv
+!results/hedging_robustness/confirmatory/headline_delta_only_per_seed.csv
+!results/hedging_sweep/full_sweep/headline_delta_only_per_seed.csv

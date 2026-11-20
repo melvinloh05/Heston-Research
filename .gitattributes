@@ -3,3 +3,6 @@ archive/** linguist-documentation
 audit/** linguist-documentation
 results/** linguist-generated
 paper/neurips_2026.sty linguist-vendored
+
+# Preserve original CSV bytes and their CRLF record endings.
+results/**/*.csv -text whitespace=cr-at-eol

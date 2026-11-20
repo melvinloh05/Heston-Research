@@ -1,0 +1,22 @@
+{
+  "eval_greeks_full/ood_param_greeks.csv": {
+    "sha256": "8a28ee8563c90141006723c95f2b2aad313980f90e9b8d892de4279336ad8043",
+    "bytes": 143709
+  },
+  "eval_greeks_hedgeslice/ood_param_greeks.csv": {
+    "sha256": "17878e470558b23fa56e4995114db883e12a647a4dbc5055e355c43816151bfe",
+    "bytes": 164227
+  },
+  "hedging/confirmatory/headline_delta_only_per_seed.csv": {
+    "sha256": "dbf30d306155e0d42b7863c5e4d13542debf28abcb9115bc071f1eb96822f7a7",
+    "bytes": 120437
+  },
+  "hedging_robustness/confirmatory/headline_delta_only_per_seed.csv": {
+    "sha256": "b720e6fa34f05e1b515964f334302d571a04082d450d0c2da7f168d550cad3e6",
+    "bytes": 157912
+  },
+  "hedging_sweep/full_sweep/headline_delta_only_per_seed.csv": {
+    "sha256": "1adfc5a13a8fec3e9964c4ee847a3b6bbfe236367b0975eed878c5dacd23f4aa",
+    "bytes": 1532150
+  }
+}

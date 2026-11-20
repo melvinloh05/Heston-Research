@@ -1,19 +1,23 @@
 # Running the research code
 
-This repository contains experimental source and historical run metadata. The paper's large label arrays, trained checkpoints, simulated paths and numerical result tables are not included in Git. A source checkout alone cannot reproduce the published numbers without those inputs or new generation and training runs.
+This repository contains experimental source and historical run metadata. Selected per-seed accuracy and hedging tables are included in Git and documented in the [results guide](../results/README.md). The original label arrays, trained checkpoints and simulated paths are not bundled. Full reproduction requires those inputs or new generation and training runs.
 
 ## Local checks
 
 Install the dependencies as described in the root README, then run:
 
 ```sh
+python -m examples.reference_demo
+python -m examples.paper_results
 python -m pytest -q
 python train.py --help
 python eval_greeks.py --help
 python run_hedging.py --help
 ```
 
-The existing CPU environment passed **284 tests** on 30 October 2026. The documented command-line entry points and `python oracle.py` numerical self-tests also passed. These checks do not reproduce the full study. `python oracle.py --full` adds more expensive checks. Passing these checks is not a convergence certificate for every evaluation point.
+The existing CPU environment passed **284 tests** on 20 November 2026. The documented command-line entry points and `python oracle.py` numerical self-tests also passed. These checks do not reproduce the full study. `python oracle.py --full` adds more expensive checks. Passing these checks is not a convergence certificate for every evaluation point.
+
+The [numerical example](../examples/reference_demo.py) evaluates three Heston call states with two reference implementations. The [results example](../examples/paper_results.py) uses the standard library to read saved comparisons. Both run without the original datasets or checkpoints. GitHub Actions runs these commands with the full test suite and numerical self-tests on CPU.
 
 ## Experimental stages
 
